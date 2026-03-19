@@ -1,16 +1,16 @@
 """
-First simple Agent-Based Boarding Simulation for a Boeing 787 twin-aisle cabin.
+Agent-Based Boarding Simulation for a Boeing 787 twin-aisle cabin.
 
-This is a minimal implementation that:
+Phase 2 features:
   - Loads the cabin graph (nodes_787.xlsx, edges_787.xlsx)
   - Loads a passenger manifest (generated_manifest.xlsx)
   - Spawns passengers one-by-one at their assigned door
   - Each tick, passengers advance along the shortest path toward their seat
+  - Passengers with luggage stow it at their row's aisle node (blocking aisle)
   - When a passenger reaches their seat node, they sit down
   - Boarding completes when every passenger is seated
 
-Simplifications (v1):
-  - No luggage stowage
+Simplifications:
   - No head-on conflict resolution
   - No row-blocking / squeeze maneuvers
   - No aisle switching
@@ -103,6 +103,14 @@ class CabinEnvironment:
                 return nid
         return None
 
+    def node_x(self, node_id: str) -> int:
+        """Return the x-coordinate of a node."""
+        return self.graph.nodes[node_id]["x"]
+
+    def node_type(self, node_id: str) -> str:
+        """Return the type of a node."""
+        return self.graph.nodes[node_id]["type"]
+
     def neighbors(self, node_id: str) -> List[str]:
         """Successors in the directed graph."""
         return list(self.graph.successors(node_id))
@@ -112,7 +120,7 @@ class CabinEnvironment:
 # Passenger Agent
 # ---------------------------------------------------------------------------
 class PassengerAgent:
-    """A single passenger agent with minimal BDI loop."""
+    """A single passenger agent with BDI loop including luggage stowage."""
 
     def __init__(
         self,
@@ -120,11 +128,19 @@ class PassengerAgent:
         assigned_seat_node: str,
         assigned_spawn: str,
         assigned_aisle: str,
+        seat_x: int,
+        has_luggage: bool = False,
+        stow_duration: int = 0,
     ) -> None:
         self.pax_id = pax_id
         self.assigned_seat_node = assigned_seat_node
         self.assigned_spawn = assigned_spawn       # "F", "M", or "R"
         self.assigned_aisle = assigned_aisle        # "L" or "R"
+        self.seat_x = seat_x                       # x-coordinate of assigned seat row
+
+        # Luggage attributes
+        self.has_luggage = has_luggage
+        self.stow_duration = stow_duration
 
         # Internal state
         self.position: Optional[str] = None        # current node id (None = not yet spawned)
@@ -132,6 +148,10 @@ class PassengerAgent:
         self.spawned: bool = False
         self.boarding_time: int = 0                 # ticks since spawn
         self.wait_count: int = 0                    # total ticks spent waiting
+
+        # Luggage state: "none" | "unstowed" | "stowing" | "stowed"
+        self.luggage_status: str = "unstowed" if has_luggage else "none"
+        self.remaining_stow_time: int = 0
 
         # Cached shortest path to seat (list of node ids, excluding current)
         self._path_cache: Optional[List[str]] = None
@@ -156,27 +176,53 @@ class PassengerAgent:
             return self._path_cache[0]
         return None
 
+    def _at_seat_row_aisle(self, env: CabinEnvironment) -> bool:
+        """Check if passenger is at an aisle node in the same row as their seat."""
+        if self.position is None:
+            return False
+        return (
+            env.node_type(self.position) == "aisle"
+            and env.node_x(self.position) == self.seat_x
+        )
+
     # --- Action generation ---------------------------------------------------
     def step(self, env: CabinEnvironment, occupied: Set[str]) -> Optional[str]:
         """
         Decide and execute one action. Returns the action description string.
 
         Actions:
-          - "sit"       : passenger reaches seat, becomes seated
-          - "move_to X" : passenger moves to node X
-          - "wait"      : passenger cannot advance, waits
+          - "sit"            : passenger reaches seat, becomes seated
+          - "move_to X"      : passenger moves to node X
+          - "start_stow"     : begin luggage stowage (blocks aisle)
+          - "continue_stow"  : continue stowing (N ticks remaining)
+          - "wait"           : passenger cannot advance, waits
         """
         if self.seated or not self.spawned:
             return None
 
         self.boarding_time += 1
 
-        # If we are already at the seat node -> sit
+        # --- Priority 1: If at seat node -> sit ---
         if self.position == self.assigned_seat_node:
             self.seated = True
-            occupied.discard(self.position)  # seat nodes don't block aisles
+            occupied.discard(self.position)  # seats don't block aisle movement
             return "sit"
 
+        # --- Priority 2: Continue ongoing luggage stowage ---
+        if self.luggage_status == "stowing":
+            self.remaining_stow_time -= 1
+            if self.remaining_stow_time <= 0:
+                self.luggage_status = "stowed"
+                return "stow_complete"
+            return f"continue_stow ({self.remaining_stow_time} left)"
+
+        # --- Priority 3: Start luggage stowage at row aisle node ---
+        if self.luggage_status == "unstowed" and self._at_seat_row_aisle(env):
+            self.luggage_status = "stowing"
+            self.remaining_stow_time = self.stow_duration
+            return "start_stow"
+
+        # --- Priority 4: Advance toward seat ---
         # Compute / recompute path if needed
         if self._path_cache is None or len(self._path_cache) == 0:
             self.compute_path(env)
@@ -232,11 +278,21 @@ class BoardingSimulation:
                 missing_seats += 1
                 continue
 
+            has_lug = bool(row.get("has_luggage", False))
+            # Scale stow_duration: manifest values are in seconds,
+            # we convert to ticks (1 tick ≈ 1 second, but values are large,
+            # so we scale down for reasonable simulation speed)
+            raw_stow = int(row.get("stow_duration", 0)) if has_lug else 0
+            stow_dur = max(1, raw_stow // 10) if has_lug else 0
+
             agent = PassengerAgent(
                 pax_id=str(row["pax_id"]),
                 assigned_seat_node=seat_node,
                 assigned_spawn=str(row["preferred_spawn"]),
                 assigned_aisle=str(row["assigned_aisle"]),
+                seat_x=int(row["x_coord"]),
+                has_luggage=has_lug,
+                stow_duration=stow_dur,
             )
             self.agents.append(agent)
 
@@ -319,14 +375,20 @@ class BoardingSimulation:
         avg_wait = (
             sum(a.wait_count for a in self.agents if a.seated) / max(seated_count, 1)
         )
+        pax_with_luggage = sum(1 for a in self.agents if a.has_luggage)
+        avg_stow = (
+            sum(a.stow_duration for a in self.agents if a.has_luggage) / max(pax_with_luggage, 1)
+        )
 
         print(f"\n{'='*60}")
         print(f"  RESULTS")
         print(f"{'='*60}")
         print(f"  Total boarding time : {total} ticks")
         print(f"  Passengers seated   : {seated_count} / {len(self.agents)}")
+        print(f"  Passengers w/ luggage: {pax_with_luggage} / {len(self.agents)}")
         print(f"  Avg boarding time   : {avg_boarding:.1f} ticks/passenger")
         print(f"  Avg wait time       : {avg_wait:.1f} ticks/passenger")
+        print(f"  Avg stow duration   : {avg_stow:.1f} ticks (luggage pax only)")
         print(f"{'='*60}\n")
 
         # Sanity checks

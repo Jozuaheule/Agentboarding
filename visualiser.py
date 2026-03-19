@@ -216,9 +216,20 @@ class BoardingVisualiser:
             base_color = PAX_COLORS.get(travel_class, PAX_DEFAULT)
 
             if agent.seated:
-                # Seated: draw smaller and dimmer
-                color = tuple(max(c - 80, 30) for c in base_color)
-                pygame.draw.circle(self.screen, color, pos, PAX_RADIUS - 2)
+                # Seated: solid filled circle on the seat node
+                pygame.draw.circle(self.screen, base_color, pos, PAX_RADIUS - 1)
+                # Inner dot to mark "occupied"
+                inner = tuple(min(c + 80, 255) for c in base_color)
+                pygame.draw.circle(self.screen, inner, pos, 2)
+
+            elif agent.luggage_status == "stowing":
+                # Stowing luggage: draw passenger + orange ring indicator
+                pygame.draw.circle(self.screen, base_color, pos, PAX_RADIUS)
+                pygame.draw.circle(self.screen, (255, 140, 30), pos, PAX_RADIUS + 3, 2)
+                # Small luggage icon (filled square offset)
+                lx, ly = pos[0] + PAX_RADIUS + 2, pos[1] - PAX_RADIUS
+                pygame.draw.rect(self.screen, (255, 140, 30), (lx, ly, 5, 5))
+
             else:
                 # Moving: draw full with a glow
                 glow_surf = pygame.Surface((PAX_RADIUS * 6, PAX_RADIUS * 6), pygame.SRCALPHA)
@@ -242,6 +253,7 @@ class BoardingVisualiser:
 
         seated = sum(1 for a in self.sim.agents if a.seated)
         spawned = sum(1 for a in self.sim.agents if a.spawned)
+        stowing = sum(1 for a in self.sim.agents if a.luggage_status == "stowing")
         total = len(self.sim.agents)
         queue_len = len(self.sim.spawn_queue)
 
@@ -254,6 +266,7 @@ class BoardingVisualiser:
             f"Tick: {self.sim.tick}",
             f"Spawned: {spawned}/{total}",
             f"Seated: {seated}/{total}",
+            f"Stowing: {stowing}",
             f"Queue: {queue_len}",
             f"Speed: {1000 // self.tick_delay:.0f} tps" if self.tick_delay > 0 else "Speed: MAX",
         ]
@@ -300,6 +313,12 @@ class BoardingVisualiser:
             label = cls.replace("_", " ").title()
             self.font_sm.render_to(self.screen, (x + 18, legend_y), label, TEXT_DIM)
             x += 150
+
+        # Stowing indicator in legend
+        pygame.draw.circle(self.screen, (150, 150, 150), (x + 6, legend_y + 6), 6)
+        pygame.draw.circle(self.screen, (255, 140, 30), (x + 6, legend_y + 6), 9, 2)
+        self.font_sm.render_to(self.screen, (x + 20, legend_y), "Stowing", TEXT_DIM)
+        x += 100
 
         # Controls
         controls = "SPACE: pause  |  ↑↓: speed  |  R: restart  |  Q: quit"

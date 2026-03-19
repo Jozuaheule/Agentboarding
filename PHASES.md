@@ -1,4 +1,4 @@
-# Phase 1 — First Simple ABM Boarding Simulation
+# Simulation Phases — ABM Boarding Simulation
 
 > **Date:** 2026-03-19  
 > **Authors:** Group 20  
@@ -26,7 +26,7 @@ This phase delivers a **minimal but working** agent-based simulation of the Boei
 
 This is intentionally minimal to validate the data pipeline and core loop:
 
-- ❌ No luggage stowage
+- ❌ No luggage stowage (added in Phase 2)
 - ❌ No head-on conflict resolution
 - ❌ No row-blocking / squeeze maneuvers
 - ❌ No aisle switching
@@ -231,7 +231,93 @@ python visualiser.py
 
 The following features correspond to the full report specification and will be added incrementally:
 
-- [ ] Luggage stowage (blocks aisle for `stow_duration` ticks)
+- [x] Luggage stowage (see Phase 2 below)
+- [ ] Head-on conflict resolution (priority rules, yielding into seats)
+- [ ] Row-blocking / squeeze maneuvers
+- [ ] Patience-based aisle switching
+- [ ] All 6 boarding strategies from the report
+- [ ] Multiple replications for statistical comparison
+- [ ] Non-compliance modeling
+
+---
+
+# Phase 2 — Luggage Stowage & Visual Improvements
+
+> **Date:** 2026-03-19  
+> **Status:** ✅ Working
+
+## Overview
+
+Phase 2 adds **luggage stowage** to the agent behaviour and improves the pygame visualiser to clearly show **occupied seats** and **stowing passengers**.
+
+## Changes to `simulation.py`
+
+### New agent attributes (from manifest)
+
+| Attribute | Type | Description |
+|---|---|---|
+| `has_luggage` | `bool` | Whether the passenger carries luggage |
+| `stow_duration` | `int` | Ticks needed to stow (manifest ÷ 10) |
+| `seat_x` | `int` | X-coordinate of assigned seat row |
+
+### New agent states
+
+```
+luggage_status: "none" → (no luggage, skip stowing)
+                "unstowed" → "stowing" → "stowed" → (proceed to seat)
+```
+
+### Stowage logic in `step()`
+
+The agent's decision priorities (in order):
+
+```
+1. At seat node?           → sit
+2. Currently stowing?      → continue_stow (decrement timer)
+3. At row aisle + unstowed? → start_stow (begin blocking aisle)
+4. Otherwise               → advance toward seat (or wait if blocked)
+```
+
+**Key behaviour:** When a passenger stows luggage, they remain on the aisle node and it stays in the `occupied` set. Other passengers:
+- **Cannot walk through** the stowing passenger (same node blocked)
+- **Can reroute** through the other aisle (twin-aisle layout) via shortest-path recomputation
+- **Wait** if no alternative path exists
+
+### `_at_seat_row_aisle()` helper
+
+Detects when a passenger has reached an aisle node at the same x-coordinate as their assigned seat — the trigger for stowing.
+
+## Changes to `visualiser.py`
+
+### Passenger rendering
+
+| State | Visual |
+|---|---|
+| Moving | Class-colored circle + white border + glow effect |
+| Stowing | Class-colored circle + **orange ring** + small orange luggage square |
+| Seated | Class-colored filled circle + **bright inner dot** on seat node |
+
+### HUD additions
+
+- **"Stowing" counter** in the stats row
+- **Stowing legend entry** with orange ring indicator
+
+## Results comparison
+
+| Metric | Phase 1 (no luggage) | Phase 2 (with luggage) |
+|---|---|---|
+| Total boarding time | 491 ticks | **510 ticks** (+4%) |
+| Passengers w/ luggage | 0 | 142 / 248 (57%) |
+| Avg boarding time | 37.4 ticks/pax | 38.0 ticks/pax |
+| Avg wait time | 1.3 ticks/pax | 1.5 ticks/pax |
+| Avg stow duration | — | 5.7 ticks |
+
+The modest increase (+4%) is because the twin-aisle layout allows blocked passengers to reroute through the other aisle rather than waiting.
+
+---
+
+## Future Phases
+
 - [ ] Head-on conflict resolution (priority rules, yielding into seats)
 - [ ] Row-blocking / squeeze maneuvers
 - [ ] Patience-based aisle switching
