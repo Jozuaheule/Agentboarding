@@ -231,18 +231,30 @@ class BoardingVisualiser:
                 pygame.draw.rect(self.screen, (255, 140, 30), (lx, ly, 5, 5))
 
             else:
-                # Moving: draw full with a glow
-                glow_surf = pygame.Surface((PAX_RADIUS * 6, PAX_RADIUS * 6), pygame.SRCALPHA)
-                pygame.draw.circle(
-                    glow_surf,
-                    (*base_color, 40),
-                    (PAX_RADIUS * 3, PAX_RADIUS * 3),
-                    PAX_RADIUS * 3,
-                )
-                self.screen.blit(
-                    glow_surf,
-                    (pos[0] - PAX_RADIUS * 3, pos[1] - PAX_RADIUS * 3),
-                )
+                # Add conflict glows based on intent
+                glow_color = None
+                if agent.intent == "resolveHeadOn":
+                    glow_color = (255, 50, 50, 100) # Red glow
+                elif agent.intent == "resolveSeatBlocked":
+                    glow_color = (180, 50, 255, 100) # Purple glow
+                elif agent.intent == "switchAisle":
+                    glow_color = (50, 200, 255, 100) # Cyan glow
+                elif agent.intent == "advance":
+                    glow_color = (*base_color, 40)   # Default glow
+                
+                if glow_color:
+                    glow_surf = pygame.Surface((PAX_RADIUS * 6, PAX_RADIUS * 6), pygame.SRCALPHA)
+                    pygame.draw.circle(
+                        glow_surf,
+                        glow_color,
+                        (PAX_RADIUS * 3, PAX_RADIUS * 3),
+                        PAX_RADIUS * 3,
+                    )
+                    self.screen.blit(
+                        glow_surf,
+                        (pos[0] - PAX_RADIUS * 3, pos[1] - PAX_RADIUS * 3),
+                    )
+                    
                 pygame.draw.circle(self.screen, base_color, pos, PAX_RADIUS)
                 pygame.draw.circle(self.screen, (255, 255, 255), pos, PAX_RADIUS, 1)
 
@@ -267,13 +279,14 @@ class BoardingVisualiser:
             f"Spawned: {spawned}/{total}",
             f"Seated: {seated}/{total}",
             f"Stowing: {stowing}",
-            f"Queue: {queue_len}",
+            f"Head-on: {sum(1 for a in self.sim.agents if a.intent == 'resolveHeadOn')}",
+            f"Shuffles: {sum(1 for a in self.sim.agents if a.intent == 'resolveSeatBlocked')}",
             f"Speed: {1000 // self.tick_delay:.0f} tps" if self.tick_delay > 0 else "Speed: MAX",
         ]
         x = 20
         for s in stats:
             self.font_med.render_to(self.screen, (x, y), s, TEXT_COLOR)
-            x += 180
+            x += 160
 
         # Progress bar
         bar_x, bar_y, bar_w, bar_h = 20, 82, self.win_w - 40, 12

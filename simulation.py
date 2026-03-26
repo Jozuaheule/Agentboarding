@@ -1,20 +1,20 @@
 """
 Agent-Based Boarding Simulation for a Boeing 787 twin-aisle cabin.
 
-Phase 2 features:
-  - Loads the cabin graph (nodes_787.xlsx, edges_787.xlsx)
-  - Loads a passenger manifest (generated_manifest.xlsx)
-  - Spawns passengers one-by-one at their assigned door
-  - Each tick, passengers advance along the shortest path toward their seat
-  - Passengers with luggage stow it at their row's aisle node (blocking aisle)
-  - When a passenger reaches their seat node, they sit down
-  - Boarding completes when every passenger is seated
+Fully aligned with the formal predicate model in ABMS_G20_Report-5.pdf (Ch. 3).
 
-Simplifications:
-  - No head-on conflict resolution
-  - No row-blocking / squeeze maneuvers
-  - No aisle switching
-  - Single strategy: random boarding through middle door (Strategy 1)
+Implemented formal properties:
+  IC1-IC6  Initial conditions
+  B1-B9    Belief-state evolution
+  O1-O6    Observation-based state characterisation
+  I1-I5    Intention selection
+  A1-A17   Action generation
+  C1       System-level completion condition
+
+Navigation uses Dijkstra shortest-path distance as the executable implementation
+of the formal coordinate-based observations (O4: rowCloserIfMoveTo, O5:
+columnCloserIfMoveTo).  Non-regression routing (d(n) ≤ d(m)) is used to
+handle graph-topology plateaus at cross-aisle connectors.
 """
 
 from __future__ import annotations
@@ -39,30 +39,29 @@ SEED = 42
 MAX_TICKS = 10_000          # safety cap
 SPAWN_RATE = 1              # passengers spawned per door per tick
 REPORT_EVERY = 50           # print progress every N ticks
+K_OBS = 5                   # perception range in hops  (Nk neighbourhood)
 
 
 # ---------------------------------------------------------------------------
-# Environment
+# Environment  (EW = G = (N, E))
 # ---------------------------------------------------------------------------
 class CabinEnvironment:
-    """Represents the aircraft cabin as a directed graph."""
+    """Static aircraft cabin graph: nodes (seats, aisle), edges."""
 
     def __init__(self, nodes_file: Path, edges_file: Path) -> None:
         df_nodes = pd.read_excel(nodes_file)
         df_edges = pd.read_excel(edges_file)
 
         self.graph = nx.DiGraph()
-
         for _, row in df_nodes.iterrows():
             nid = row["id"]
             ntype = "seat" if row["type"] == "stand" else row["type"]
             self.graph.add_node(nid, x=int(row["x"]), y=int(row["y"]), type=ntype)
-
         for _, row in df_edges.iterrows():
             self.graph.add_edge(row["from"], row["to"], length=row["length"])
 
-        # Build quick look-ups
-        self.seat_nodes: Dict[str, dict] = {}      # id -> attrs
+        # Quick look-ups
+        self.seat_nodes: Dict[str, dict] = {}
         self.aisle_nodes: Dict[str, dict] = {}
         for nid, data in self.graph.nodes(data=True):
             if data["type"] == "seat":
@@ -70,114 +69,181 @@ class CabinEnvironment:
             elif data["type"] == "aisle":
                 self.aisle_nodes[nid] = data
 
-        # Identify door / spawn nodes.
-        # Convention: the "M" (middle) door is around x ≈ 23 on the left aisle (y=3).
-        # We pick the aisle node closest to x=23, y=3 as the middle door.
-        # The "F" (front) door is the aisle node at x=0, y=3.
-        # The "R" (rear) door is the aisle node near x=125, y=3.
+        # Doors (spawn nodes ⊆ Naisle)
         self.doors: Dict[str, str] = {}
         self._find_door("F", target_x=0, target_y=3)
         self._find_door("M", target_x=23, target_y=3)
         self._find_door("R", target_x=125, target_y=3)
 
+        # x_mid – longitudinal midpoint of the cabin (Property B8)
+        all_x = [d["x"] for d in self.graph.nodes.values()]
+        self.x_mid: int = (min(all_x) + max(all_x)) // 2
+
+        # All-pairs shortest-path lengths AND paths (weighted)
+        self.all_dists: Dict[str, Dict[str, float]] = {}
+        self._all_paths: Dict[str, Dict[str, list]] = {}
+        for src, (dists, paths) in nx.all_pairs_dijkstra(self.graph, weight="length"):
+            self.all_dists[src] = dists
+            self._all_paths[src] = paths
+
+        # Hop-distance graph (undirected) for perception neighbourhood Nk
+        self._hop_graph = self.graph.to_undirected()
+
         print(f"Environment loaded: {self.graph.number_of_nodes()} nodes, "
               f"{self.graph.number_of_edges()} edges")
         print(f"  Seats: {len(self.seat_nodes)}, Aisle: {len(self.aisle_nodes)}")
-        print(f"  Doors: {self.doors}")
+        print(f"  Doors: {self.doors}  |  x_mid={self.x_mid}")
 
     def _find_door(self, label: str, target_x: int, target_y: int) -> None:
-        """Find the aisle node closest to (target_x, target_y)."""
-        best_id, best_dist = None, float("inf")
+        best_id, best_d = None, float("inf")
         for nid, data in self.aisle_nodes.items():
             d = abs(data["x"] - target_x) + abs(data["y"] - target_y)
-            if d < best_dist:
-                best_dist = d
+            if d < best_d:
+                best_d = d
                 best_id = nid
         if best_id is not None:
             self.doors[label] = best_id
 
     def seat_node_at(self, x: int, y: int) -> Optional[str]:
-        """Return the seat node id at coordinates (x, y), or None."""
         for nid, data in self.seat_nodes.items():
             if data["x"] == x and data["y"] == y:
                 return nid
         return None
 
-    def node_x(self, node_id: str) -> int:
-        """Return the x-coordinate of a node."""
-        return self.graph.nodes[node_id]["x"]
+    def node_x(self, nid: str) -> int:
+        return self.graph.nodes[nid]["x"]
 
-    def node_type(self, node_id: str) -> str:
-        """Return the type of a node."""
-        return self.graph.nodes[node_id]["type"]
+    def node_y(self, nid: str) -> int:
+        return self.graph.nodes[nid]["y"]
 
-    def neighbors(self, node_id: str) -> List[str]:
-        """Successors in the directed graph."""
-        return list(self.graph.successors(node_id))
+    def node_type(self, nid: str) -> str:
+        return self.graph.nodes[nid]["type"]
+
+    def neighbors(self, nid: str) -> List[str]:
+        return list(self.graph.successors(nid))
+
+    def dist(self, source: str, target: str) -> float:
+        """Dijkstra shortest-path distance (weighted)."""
+        if source in self.all_dists and target in self.all_dists[source]:
+            return self.all_dists[source][target]
+        return float("inf")
+
+    def next_hop(self, source: str, target: str) -> Optional[str]:
+        """Return the next node on the shortest weighted path from source to target.
+        Returns None if source == target or no path exists."""
+        if source == target:
+            return None
+        if source in self._all_paths and target in self._all_paths[source]:
+            path = self._all_paths[source][target]
+            if len(path) >= 2:
+                return path[1]
+        return None
+
+    def hop_distance(self, a: str, b: str) -> int:
+        """Unweighted hop distance (for perception range Nk)."""
+        try:
+            return nx.shortest_path_length(self._hop_graph, a, b)
+        except nx.NetworkXNoPath:
+            return 9999
+
+    def aisle_type(self, nid: str) -> Optional[str]:
+        """Return 'L' or 'R' for aisle nodes based on y-coordinate."""
+        if self.node_type(nid) != "aisle":
+            return None
+        return "L" if self.node_y(nid) <= 3 else "R"
 
 
 # ---------------------------------------------------------------------------
-# Passenger Agent
+# Passenger Agent  (Statep = ⟨Staticp, Internalp, Inputp, Outputp⟩)
 # ---------------------------------------------------------------------------
 class PassengerAgent:
-    """A single passenger agent with BDI loop including luggage stowage."""
+    """Passenger agent with full BDI loop aligned to Ch. 3 formal properties."""
 
     def __init__(
         self,
         pax_id: str,
         assigned_seat_node: str,
         assigned_spawn: str,
+        alternative_spawn: str,
         assigned_aisle: str,
         seat_x: int,
+        seat_y: int,
+        travel_class: str = "economy",
+        preferred_speed: int = 1,
+        lateral_speed: int = 1,
+        patience_threshold: int = 15,
+        compliance_level: float = 0.8,
         has_luggage: bool = False,
         stow_duration: int = 0,
+        zone_std: int = 1,
+        zone_outsidein: int = 1,
+        zone_pyramid: int = 1,
     ) -> None:
+        # === Staticp (time-invariant, Section 3.3.1) ===
         self.pax_id = pax_id
         self.assigned_seat_node = assigned_seat_node
-        self.assigned_spawn = assigned_spawn       # "F", "M", or "R"
-        self.assigned_aisle = assigned_aisle        # "L" or "R"
-        self.seat_x = seat_x                       # x-coordinate of assigned seat row
+        self.assigned_spawn = assigned_spawn
+        self.alternative_spawn = alternative_spawn
+        self.assigned_aisle = assigned_aisle
+        self.seat_x = seat_x                        # xs
+        self.seat_y = seat_y                        # ys
+        self.travel_class = travel_class            # classp
+        self.preferred_speed = preferred_speed      # preferredSpeedp
+        self.lateral_speed = lateral_speed          # lateralSpeedp
+        self.patience_threshold = patience_threshold  # patienceThresholdp
+        self.compliance_level = compliance_level    # complianceLevelp
+        self.has_luggage = has_luggage              # hasLuggagep
+        self.stow_duration = stow_duration          # stowDurationp
+        self.zone_std = zone_std                    # zoneSTDp
+        self.zone_outsidein = zone_outsidein        # zoneOutsideInp
+        self.zone_pyramid = zone_pyramid            # zonePyramidp
 
-        # Luggage attributes
-        self.has_luggage = has_luggage
-        self.stow_duration = stow_duration
-
-        # Internal state
-        self.position: Optional[str] = None        # current node id (None = not yet spawned)
-        self.seated: bool = False
-        self.spawned: bool = False
-        self.boarding_time: int = 0                 # ticks since spawn
-        self.wait_count: int = 0                    # total ticks spent waiting
-
-        # Luggage state: "none" | "unstowed" | "stowing" | "stowed"
-        self.luggage_status: str = "unstowed" if has_luggage else "none"
+        # === Internalp – Beliefs ===
+        self.position: Optional[str] = None         # observes(p, position(n))   [IC1]
+        self.seated: bool = False                   # believes(p, seated)        [IC2]
+        self.luggage_status: str = (                # believes(p, luggageStatus) [IC3]
+            "unstowed" if has_luggage else "none"
+        )
         self.remaining_stow_time: int = 0
+        self.time_since_move: int = 0               # believes(p, timeSinceMove) [IC4]
 
-        # Cached shortest path to seat (list of node ids, excluding current)
-        self._path_cache: Optional[List[str]] = None
+        # Per-tick beliefs (reset each tick during evaluate_intent)
+        self.head_on_conflict: bool = False         # believes(p, headOnConflict) [B7]
+        self.opponent_has_priority: bool = False    # believes(p, opponentHasPriority) [B8]
+        self.row_blocker: bool = False              # believes(p, rowBlocker)     [B4]
+        self.row_blocked: bool = False              # believes(p, rowBlocked)     [B5]
+        self.row_shift_complete: bool = False       # believes(p, rowShiftComplete) [B6]
 
-    # --- Perception ----------------------------------------------------------
-    def compute_path(self, env: CabinEnvironment) -> None:
-        """Compute shortest path from current position to assigned seat."""
-        if self.position is None or self.seated:
-            self._path_cache = None
-            return
-        try:
-            path = nx.shortest_path(
-                env.graph, self.position, self.assigned_seat_node, weight="length"
-            )
-            self._path_cache = path[1:]  # drop current position
-        except nx.NetworkXNoPath:
-            self._path_cache = None
+        # Persistent head-on state: tracks time-since-yield and opponent
+        self._yielding_since: int = 0               # ticks spent in refuge
+        self._yield_opponent_id: Optional[str] = None
 
-    def next_desired_node(self) -> Optional[str]:
-        """Next node along the cached path."""
-        if self._path_cache:
-            return self._path_cache[0]
-        return None
+        # === Internalp – Intentions ===                               [IC5]
+        self.intent: str = "none"
+
+        # === Outputp – Actions ===                                    [IC6]
+        self.last_action: str = "none"
+
+        # === Bookkeeping ===
+        self.spawned: bool = False
+        self.boarding_time: int = 0
+        self.wait_count: int = 0
+
+    # -----------------------------------------------------------------------
+    # Helper predicates
+    # -----------------------------------------------------------------------
+    def _dir(self, env: CabinEnvironment) -> int:
+        """dir(p, t) = sign(xs − xm)  – intended travel direction."""
+        if self.position is None:
+            return 0
+        return _sign(self.seat_x - env.node_x(self.position))
+
+    def _ready_to_enter(self) -> bool:
+        """readyToEnterp: no luggage OR luggage already stowed."""
+        return (not self.has_luggage) or (self.luggage_status == "stowed")
 
     def _at_seat_row_aisle(self, env: CabinEnvironment) -> bool:
-        """Check if passenger is at an aisle node in the same row as their seat."""
+        """True if position is an aisle node at the same x as the seat."""
         if self.position is None:
             return False
         return (
@@ -185,76 +251,602 @@ class PassengerAgent:
             and env.node_x(self.position) == self.seat_x
         )
 
-    # --- Action generation ---------------------------------------------------
-    def step(self, env: CabinEnvironment, occupied: Set[str]) -> Optional[str]:
-        """
-        Decide and execute one action. Returns the action description string.
+    def _aisle_access_node(self, env: CabinEnvironment) -> Optional[str]:
+        """ap: aisle-access node on assigned-aisle side for this pax's row."""
+        for nid in env.aisle_nodes:
+            if (env.node_x(nid) == self.seat_x
+                    and env.aisle_type(nid) == self.assigned_aisle):
+                return nid
+        for nid in env.aisle_nodes:
+            if env.node_x(nid) == self.seat_x:
+                return nid
+        return None
 
-        Actions:
-          - "sit"            : passenger reaches seat, becomes seated
-          - "move_to X"      : passenger moves to node X
-          - "start_stow"     : begin luggage stowage (blocks aisle)
-          - "continue_stow"  : continue stowing (N ticks remaining)
-          - "wait"           : passenger cannot advance, waits
-        """
-        if self.seated or not self.spawned:
+    def _on_path_nodes(self, env: CabinEnvironment) -> List[str]:
+        """onPathp(n): seat nodes strictly between aisle-access and assigned seat."""
+        ap = self._aisle_access_node(env)
+        if ap is None:
+            return []
+        yap = env.node_y(ap)
+        ys = self.seat_y
+        result = []
+        for nid, data in env.seat_nodes.items():
+            if data["x"] == self.seat_x:
+                yn = data["y"]
+                if min(yap, ys) < yn < max(yap, ys):
+                    result.append(nid)
+        return result
+
+    def _aisle_side_seat(self, env: CabinEnvironment) -> Optional[str]:
+        """aisleSidep(n): seat adjacent to aisle-access in this row."""
+        ap = self._aisle_access_node(env)
+        if ap is None:
             return None
+        for n in env.neighbors(ap):
+            if env.node_type(n) == "seat" and env.node_x(n) == self.seat_x:
+                return n
+        return None
 
-        self.boarding_time += 1
+    def _stow_trigger(self, env: CabinEnvironment) -> bool:
+        """True if at aisle at seat row with unstowed luggage."""
+        if self.position is None:
+            return False
+        if not self.has_luggage or self.luggage_status != "unstowed":
+            return False
+        return self._at_seat_row_aisle(env)
 
-        # --- Priority 1: If at seat node -> sit ---
-        if self.position == self.assigned_seat_node:
-            self.seated = True
-            occupied.discard(self.position)  # seats don't block aisle movement
+    # -----------------------------------------------------------------------
+    # Routing helpers (implements O4, O5 via Dijkstra shortest-path)
+    # -----------------------------------------------------------------------
+    def _best_aisle_advance(
+        self, env: CabinEnvironment, occupied: Set[str]
+    ) -> Optional[str]:
+        """Next hop on shortest path to seat, skipping seat nodes.
+        Falls back to best free non-seat neighbor with d(n) ≤ d(cur)."""
+        if self.position is None:
+            return None
+        # Primary: shortest-path next hop
+        nh = env.next_hop(self.position, self.assigned_seat_node)
+        if nh is not None and nh not in occupied and env.node_type(nh) != "seat":
+            return nh
+        # Fallback: best free non-seat neighbor with d ≤ cur
+        cur_dist = env.dist(self.position, self.assigned_seat_node)
+        best, best_d = None, float("inf")
+        for n in env.neighbors(self.position):
+            if n in occupied or env.node_type(n) == "seat":
+                continue
+            d = env.dist(n, self.assigned_seat_node)
+            if d <= cur_dist and d < best_d:
+                best, best_d = n, d
+        return best
+
+    def _best_row_step(
+        self, env: CabinEnvironment, occupied: Set[str]
+    ) -> Optional[str]:
+        """Next hop on shortest path to seat (including seats).
+        Falls back to best free neighbor with d(n) ≤ d(cur)."""
+        if self.position is None:
+            return None
+        nh = env.next_hop(self.position, self.assigned_seat_node)
+        if nh is not None and nh not in occupied:
+            return nh
+        cur_dist = env.dist(self.position, self.assigned_seat_node)
+        best, best_d = None, float("inf")
+        for n in env.neighbors(self.position):
+            if n in occupied:
+                continue
+            d = env.dist(n, self.assigned_seat_node)
+            if d <= cur_dist and d < best_d:
+                best, best_d = n, d
+        return best
+
+    def _seat_is_neighbor(self, env: CabinEnvironment) -> bool:
+        """True if assigned seat is a direct graph neighbor."""
+        if self.position is None:
+            return False
+        return self.assigned_seat_node in env.neighbors(self.position)
+
+    def _any_free_aisle_neighbor(
+        self, env: CabinEnvironment, occupied: Set[str]
+    ) -> Optional[str]:
+        """Return any free aisle neighbor (even if distance increases).
+        Used to escape non-target seat nodes."""
+        if self.position is None:
+            return None
+        best, best_d = None, float("inf")
+        for n in env.neighbors(self.position):
+            if n in occupied:
+                continue
+            if env.node_type(n) != "aisle":
+                continue
+            d = env.dist(n, self.assigned_seat_node)
+            if d < best_d:
+                best, best_d = n, d
+        return best
+
+    def _in_seat_row_not_target(self, env: CabinEnvironment) -> bool:
+        """True if in a seat node at the assigned row but not the target seat."""
+        if self.position is None:
+            return False
+        return (
+            env.node_type(self.position) == "seat"
+            and env.node_x(self.position) == self.seat_x
+            and self.position != self.assigned_seat_node
+        )
+
+    def _switch_candidate(
+        self, env: CabinEnvironment, occupied: Set[str]
+    ) -> Optional[str]:
+        """switchCandidatep(n): free adjacent aisle on the OPPOSITE side
+        that reduces distance to seat."""
+        if self.position is None:
+            return None
+        my_aisle = env.aisle_type(self.position)
+        if my_aisle is None:
+            return None
+        cur_dist = env.dist(self.position, self.assigned_seat_node)
+        for n in env.neighbors(self.position):
+            if n in occupied:
+                continue
+            if env.node_type(n) != "aisle":
+                continue
+            if env.aisle_type(n) == my_aisle:
+                continue
+            if env.dist(n, self.assigned_seat_node) < cur_dist:
+                return n
+        return None
+
+    # ===================================================================
+    #  Phase A:  INTENTION EVALUATION   (Properties I1–I5, B4-B9)
+    # ===================================================================
+    def evaluate_intent(
+        self,
+        env: CabinEnvironment,
+        occupied: Set[str],
+        all_agents: Dict[str, "PassengerAgent"],
+        agent_at: Dict[str, "PassengerAgent"],
+    ) -> None:
+        """Evaluate observations → beliefs → intention."""
+        if not self.spawned or self.position is None:
+            self.intent = "none"
+            return
+
+        # R0: seated → terminal
+        if self.seated:
+            self.intent = "none"
+            return
+
+        cur = self.position
+
+        # Reset per-tick beliefs
+        self.head_on_conflict = False
+        self.opponent_has_priority = False
+        self.row_blocker = False
+        self.row_blocked = False
+        self.row_shift_complete = False
+
+        # =================================================================
+        #  A1:  Direct Seating — at assigned seat
+        # =================================================================
+        if cur == self.assigned_seat_node and self._ready_to_enter():
+            self.intent = "sit"
+            return
+
+        # A1b:  Seat is direct neighbour and free → enter directly
+        if (self._ready_to_enter()
+                and self._seat_is_neighbor(env)
+                and self.assigned_seat_node not in occupied):
+            self.intent = "enterRow"
+            return
+
+        # =================================================================
+        #  A2/A3:  Luggage stowage
+        # =================================================================
+        if self._stow_trigger(env):
+            self.intent = "stow"
+            return
+        if self.luggage_status == "stowing":
+            self.intent = "stow"
+            return
+
+        # =================================================================
+        #  Continue row entry if already in a seat at our row
+        # =================================================================
+        if self._in_seat_row_not_target(env) and self._ready_to_enter():
+            step = self._best_row_step(env, occupied)
+            if step is not None:
+                self.intent = "enterRow"
+                return
+
+        # =================================================================
+        #  Return-to-aisle: in a non-target seat (e.g. from yielding)
+        # =================================================================
+        if (env.node_type(cur) == "seat"
+                and cur != self.assigned_seat_node):
+            # Clear yield memory if present
+            self._yield_opponent_id = None
+            self._yielding_since = 0
+            # Try to return to aisle
+            aisle_n = self._any_free_aisle_neighbor(env, occupied)
+            if aisle_n is not None:
+                self.intent = "advance"  # will use _best_aisle_advance or fallback
+                return
+            # No free aisle neighbor → wait
+            self.intent = "wait"
+            return
+
+        # =================================================================
+        #  B9:  Still yielding from a previous head-on?
+        # =================================================================
+        if self._yield_opponent_id is not None and env.node_type(cur) == "seat":
+            opp = all_agents.get(self._yield_opponent_id)
+            if opp is not None and opp.position is not None:
+                # Check if opponent has passed (B9): opponent no longer within
+                # K_OBS hops or has moved past my x-coordinate
+                h = env.hop_distance(cur, opp.position)
+                opp_x = env.node_x(opp.position)
+                my_x = env.node_x(cur)
+                opp_dir = opp._dir(env)
+                still_nearby = (h <= K_OBS and not opp.seated)
+                still_blocking = False
+                if still_nearby:
+                    # Opponent hasn't passed if they're still at or behind my position
+                    if (opp_dir > 0 and opp_x < my_x) or \
+                       (opp_dir < 0 and opp_x > my_x):
+                        still_blocking = True
+                    elif opp_x == my_x:
+                        still_blocking = True
+
+                if still_blocking:
+                    self._yielding_since += 1
+                    # Safety valve: don't yield forever (max 10 ticks)
+                    if self._yielding_since < 10:
+                        self.head_on_conflict = True
+                        self.opponent_has_priority = True
+                        self.intent = "resolveHeadOn"
+                        return
+
+            # Opponent passed or gone → clear yield state
+            self._yield_opponent_id = None
+            self._yielding_since = 0
+            # Return to aisle: treated as advance
+            adv = self._best_aisle_advance(env, occupied)
+            if adv is not None:
+                self.intent = "advance"
+                return
+
+        # =================================================================
+        #  B7/B8:  Fresh head-on detection (aisle, opposite direction, ≤ K_OBS)
+        # =================================================================
+        my_dir = self._dir(env)
+        if my_dir != 0 and env.node_type(cur) == "aisle":
+            for n in env.neighbors(cur):
+                if n not in agent_at:
+                    continue
+                if env.node_type(n) != "aisle":
+                    continue
+                if env.hop_distance(cur, n) > K_OBS:
+                    continue
+                q = agent_at[n]
+                q_dir = q._dir(env)
+                if q_dir != 0 and q_dir == -my_dir:
+                    # B7: head-on detected
+                    # B8: priority assignment
+                    p_yields = False
+                    if (not self.has_luggage) and q.has_luggage:
+                        p_yields = True
+                    elif self.has_luggage and not q.has_luggage:
+                        p_yields = False
+                    elif self.has_luggage == q.has_luggage:
+                        my_mid = abs(self.seat_x - env.x_mid)
+                        q_mid = abs(q.seat_x - env.x_mid)
+                        if my_mid > q_mid:
+                            p_yields = True
+                        elif my_mid == q_mid:
+                            p_yields = int(self.pax_id) > int(q.pax_id)
+
+                    # Safety: skip head-on if priority side can't advance
+                    # (prevents permanent conflict stall)
+                    if p_yields:
+                        # I would yield — check if opponent (priority) can advance
+                        q_occ = occupied - {n}  # q's position excluded
+                        q_adv = q._best_aisle_advance(env, q_occ)
+                        if q_adv is None:
+                            continue  # opponent stuck, no point yielding
+                    else:
+                        # I have priority — check if I can actually advance
+                        adv = self._best_aisle_advance(env, occupied)
+                        if adv is None:
+                            continue  # can't advance, skip head-on
+
+                    self.head_on_conflict = True
+                    self.opponent_has_priority = p_yields
+                    self.intent = "resolveHeadOn"
+                    return
+
+        # =================================================================
+        #  B5 / I2:  Row-blocked (at aisle-access, ready, path occupied)
+        # =================================================================
+        if self._at_seat_row_aisle(env) and self._ready_to_enter():
+            on_path = self._on_path_nodes(env)
+            blockers = [n for n in on_path if n in agent_at]
+            # Also check if the target seat itself is occupied by someone else
+            seat_occupied = (
+                self.assigned_seat_node in agent_at
+                and agent_at[self.assigned_seat_node].pax_id != self.pax_id
+            )
+            if blockers or seat_occupied:
+                self.row_blocked = True
+                aisle_side = self._aisle_side_seat(env)
+                deeper_clear = all(
+                    n not in agent_at for n in on_path if n != aisle_side
+                )
+                if deeper_clear and aisle_side is not None:
+                    self.row_shift_complete = True
+                self.intent = "resolveSeatBlock"
+                return
+
+        # =================================================================
+        #  B4 / I3:  Am I blocking someone else's row entry?
+        # =================================================================
+        if env.node_type(cur) == "seat":
+            for other in agent_at.values():
+                if other.pax_id == self.pax_id:
+                    continue
+                if not other._at_seat_row_aisle(env):
+                    continue
+                if not other._ready_to_enter():
+                    continue
+                # Blocking if on their path OR sitting in their target seat
+                if cur in other._on_path_nodes(env) or cur == other.assigned_seat_node:
+                    self.row_blocker = True
+                    self.intent = "resolveSeatBlock"
+                    return
+
+        # =================================================================
+        #  I5:  Enter row (at seat-row aisle, ready, no blockers)
+        # =================================================================
+        if (self._at_seat_row_aisle(env)
+                and self._ready_to_enter()
+                and cur != self.assigned_seat_node):
+            self.intent = "enterRow"
+            return
+
+        # =================================================================
+        #  I1:  Advance (greedy progress toward seat)
+        # =================================================================
+        adv = self._best_aisle_advance(env, occupied)
+        if adv is not None:
+            self.intent = "advance"
+            return
+
+        # =================================================================
+        #  A17:  Probabilistic aisle switch
+        # =================================================================
+        if self.time_since_move >= self.patience_threshold:
+            sc = self._switch_candidate(env, occupied)
+            if sc is not None:
+                self.intent = "switchAisle"
+                return
+
+        # =================================================================
+        #  A6:  Default wait
+        # =================================================================
+        self.intent = "wait"
+
+    # ===================================================================
+    #  Phase B:  ACTION EXECUTION   (Properties A1–A17)
+    # ===================================================================
+    def execute_action(
+        self,
+        env: CabinEnvironment,
+        occupied: Set[str],
+        agent_at: Dict[str, "PassengerAgent"],
+        all_agents: Dict[str, "PassengerAgent"],
+        next_positions: Dict[str, str],
+        rng: random.Random,
+    ) -> str:
+        """Translate intent into physical state change."""
+        if not self.spawned or self.position is None:
+            return "none"
+
+        cur = self.position
+
+        # ---- A1: sit ----
+        if self.intent == "sit":
+            if cur != self.assigned_seat_node:
+                # Safety: shouldn't happen, but don't set seated if not at seat
+                next_positions[self.pax_id] = cur
+                return "wait"
+            self.seated = True                      # B1
+            self.time_since_move = 0
+            # Seated agents don't block aisle
             return "sit"
 
-        # --- Priority 2: Continue ongoing luggage stowage ---
-        if self.luggage_status == "stowing":
-            self.remaining_stow_time -= 1
-            if self.remaining_stow_time <= 0:
-                self.luggage_status = "stowed"
-                return "stow_complete"
-            return f"continue_stow ({self.remaining_stow_time} left)"
+        # ---- A2/A3: luggage stowage ----
+        if self.intent == "stow":
+            next_positions[self.pax_id] = cur
+            if self.luggage_status == "unstowed":
+                self.luggage_status = "stowing"
+                self.remaining_stow_time = self.stow_duration
+                self.time_since_move = 0
+                return "startStow"
+            else:
+                self.remaining_stow_time -= 1
+                if self.remaining_stow_time <= 0:
+                    self.luggage_status = "stowed"
+                    return "stowComplete"
+                return "wait"
 
-        # --- Priority 3: Start luggage stowage at row aisle node ---
-        if self.luggage_status == "unstowed" and self._at_seat_row_aisle(env):
-            self.luggage_status = "stowing"
-            self.remaining_stow_time = self.stow_duration
-            return "start_stow"
-
-        # --- Priority 4: Advance toward seat ---
-        # Compute / recompute path if needed
-        if self._path_cache is None or len(self._path_cache) == 0:
-            self.compute_path(env)
-
-        next_node = self.next_desired_node()
-
-        if next_node is None:
-            # No path found – wait
-            self.wait_count += 1
+        # ---- A5: advance ----
+        if self.intent == "advance":
+            target = self._best_aisle_advance(env, occupied)
+            # Fallback: if in a non-target seat, allow any free aisle neighbor
+            if target is None and env.node_type(cur) == "seat" and cur != self.assigned_seat_node:
+                target = self._any_free_aisle_neighbor(env, occupied)
+            if target is not None and target not in next_positions.values():
+                next_positions[self.pax_id] = target
+                self.position = target
+                self.time_since_move = 0
+                return f"moveTo:{target}"
+            next_positions[self.pax_id] = cur
+            self.time_since_move += 1
             return "wait"
 
-        # Check if next node is free
-        if next_node not in occupied:
-            # Move
-            old = self.position
-            occupied.discard(old)
-            self.position = next_node
-            occupied.add(next_node)
-            self._path_cache = self._path_cache[1:]
-            return f"move_to {next_node}"
-        else:
-            # Blocked – wait and recompute next tick
-            self.wait_count += 1
-            self._path_cache = None   # force recomputation
+        # ---- A4: enter row ----
+        if self.intent == "enterRow":
+            target = self._best_row_step(env, occupied)
+            if target is not None and target not in next_positions.values():
+                next_positions[self.pax_id] = target
+                self.position = target
+                self.time_since_move = 0
+                return f"moveTo:{target}"
+            next_positions[self.pax_id] = cur
+            self.time_since_move += 1
             return "wait"
+
+        # ---- A11-A16: head-on conflict resolution ----
+        if self.intent == "resolveHeadOn":
+            if not self.opponent_has_priority:
+                # A11: I have priority → advance if possible
+                target = self._best_aisle_advance(env, occupied)
+                if target is not None and target not in next_positions.values():
+                    next_positions[self.pax_id] = target
+                    self.position = target
+                    self.time_since_move = 0
+                    return f"moveTo:{target}"
+                # A12: priority wait
+                next_positions[self.pax_id] = cur
+                self.time_since_move += 1
+                return "wait"
+            else:
+                # A13: yield → move into adjacent free seat (refuge)
+                if env.node_type(cur) == "aisle":
+                    for n in env.neighbors(cur):
+                        if n in occupied or n in next_positions.values():
+                            continue
+                        if env.node_type(n) == "seat":
+                            next_positions[self.pax_id] = n
+                            self.position = n
+                            self.time_since_move = 0
+                            # Track yield state for B9
+                            # Find the opponent
+                            for nb in env.neighbors(cur):
+                                if nb in agent_at and nb != n:
+                                    q = agent_at[nb]
+                                    if q._dir(env) == -self._dir(env):
+                                        self._yield_opponent_id = q.pax_id
+                                        self._yielding_since = 0
+                                        break
+                            return f"yield:{n}"
+                    # A16: no free seat → wait
+                    next_positions[self.pax_id] = cur
+                    self.time_since_move += 1
+                    return "wait"
+                # A14: already in refuge seat → wait
+                next_positions[self.pax_id] = cur
+                self.time_since_move += 1
+                return "wait"
+
+        # ---- A7-A10/A15: seat-block resolution ----
+        if self.intent == "resolveSeatBlock":
+            if self.row_blocker:
+                # A7: shift outward toward aisle-access
+                req_ap = None
+                for other in agent_at.values():
+                    if other.pax_id == self.pax_id:
+                        continue
+                    if not other._at_seat_row_aisle(env):
+                        continue
+                    if not other._ready_to_enter():
+                        continue
+                    if cur in other._on_path_nodes(env) or cur == other.assigned_seat_node:
+                        req_ap = other._aisle_access_node(env)
+                        break
+
+                if req_ap is not None:
+                    yap = env.node_y(req_ap)
+                    # A7: shift to adjacent seat closer to aisle
+                    for n in env.neighbors(cur):
+                        if n in occupied or n in next_positions.values():
+                            continue
+                        if (env.node_type(n) == "seat"
+                                and env.node_x(n) == env.node_x(cur)):
+                            if abs(env.node_y(n) - yap) < abs(env.node_y(cur) - yap):
+                                next_positions[self.pax_id] = n
+                                self.position = n
+                                self.time_since_move = 0
+                                self.seated = False
+                                return f"shiftOut:{n}"
+                    # A8: outermost blocker → step into aisle
+                    if req_ap in env.neighbors(cur):
+                        if req_ap not in occupied and req_ap not in next_positions.values():
+                            next_positions[self.pax_id] = req_ap
+                            self.position = req_ap
+                            self.time_since_move = 0
+                            self.seated = False
+                            return f"shiftToAisle:{req_ap}"
+
+                next_positions[self.pax_id] = cur
+                self.time_since_move += 1
+                return "wait"
+
+            elif self.row_blocked:
+                if self.row_shift_complete:
+                    # A9/A10: squeeze with aisle-side occupant
+                    aisle_side = self._aisle_side_seat(env)
+                    if aisle_side is not None and aisle_side in agent_at:
+                        q = agent_at[aisle_side]
+                        if not q.seated:  # Never swap with a seated agent
+                            old_p, old_q = cur, q.position
+                            self.position = old_q
+                            q.position = old_p
+                            q.seated = False  # Safety: ensure not marked seated
+                            next_positions[self.pax_id] = old_q
+                            next_positions[q.pax_id] = old_p
+                            self.time_since_move = 0
+                            q.time_since_move = 0
+                            return f"squeezeWith:{q.pax_id}"
+                    elif aisle_side is not None and aisle_side not in occupied:
+                        if aisle_side not in next_positions.values():
+                            next_positions[self.pax_id] = aisle_side
+                            self.position = aisle_side
+                            self.time_since_move = 0
+                            return f"moveTo:{aisle_side}"
+
+                # A15: wait for shift
+                next_positions[self.pax_id] = cur
+                self.time_since_move += 1
+                return "wait"
+
+            next_positions[self.pax_id] = cur
+            self.time_since_move += 1
+            return "wait"
+
+        # ---- A17: probabilistic aisle switch ----
+        if self.intent == "switchAisle":
+            sc = self._switch_candidate(env, occupied)
+            if sc is not None and sc not in next_positions.values():
+                if rng.random() < self.compliance_level:
+                    next_positions[self.pax_id] = sc
+                    self.position = sc
+                    self.time_since_move = 0
+                    return f"switchAisle:{sc}"
+            next_positions[self.pax_id] = cur
+            self.time_since_move += 1
+            return "wait"
+
+        # ---- A6: default wait ----
+        next_positions[self.pax_id] = cur
+        self.time_since_move += 1
+        return "wait"
 
 
 # ---------------------------------------------------------------------------
 # Simulation
 # ---------------------------------------------------------------------------
 class BoardingSimulation:
-    """Runs the discrete-time boarding simulation."""
+    """Discrete-time boarding simulation (C1 completion condition)."""
 
     def __init__(
         self,
@@ -267,7 +859,6 @@ class BoardingSimulation:
         self.tick = 0
         self.occupied: Set[str] = set()
 
-        # Load manifest and create agents
         df = pd.read_excel(manifest_file)
         self.agents: List[PassengerAgent] = []
         missing_seats = 0
@@ -279,9 +870,6 @@ class BoardingSimulation:
                 continue
 
             has_lug = bool(row.get("has_luggage", False))
-            # Scale stow_duration: manifest values are in seconds,
-            # we convert to ticks (1 tick ≈ 1 second, but values are large,
-            # so we scale down for reasonable simulation speed)
             raw_stow = int(row.get("stow_duration", 0)) if has_lug else 0
             stow_dur = max(1, raw_stow // 10) if has_lug else 0
 
@@ -289,71 +877,106 @@ class BoardingSimulation:
                 pax_id=str(row["pax_id"]),
                 assigned_seat_node=seat_node,
                 assigned_spawn=str(row["preferred_spawn"]),
+                alternative_spawn=str(row.get("alternative_spawn",
+                                               row["preferred_spawn"])),
                 assigned_aisle=str(row["assigned_aisle"]),
                 seat_x=int(row["x_coord"]),
+                seat_y=int(row["y_coord"]),
+                travel_class=str(row.get("class", "economy")),
+                preferred_speed=int(row.get("preferred_speed", 1)),
+                lateral_speed=int(row.get("lateral_speed", 1)),
+                patience_threshold=int(row.get("patience_threshold", 15)),
+                compliance_level=0.8,
                 has_luggage=has_lug,
                 stow_duration=stow_dur,
+                zone_std=int(row.get("zone_std", 1)),
+                zone_outsidein=int(row.get("zone_outsidein", 1)),
+                zone_pyramid=int(row.get("zone_pyramid", 1)),
             )
             self.agents.append(agent)
 
         if missing_seats:
             print(f"  Warning: {missing_seats} passengers skipped (seat node not found)")
 
-        # Boarding queue: randomize order (Strategy 1: random through M door)
-        self.rng.shuffle(self.agents)
-        self.spawn_queue: deque[PassengerAgent] = deque(self.agents)
+        self.agents_by_id: Dict[str, PassengerAgent] = {
+            a.pax_id: a for a in self.agents
+        }
+
+        # Per-door spawn queues (IC1: two doors, bi-directional passengers)
+        self.spawn_queues: Dict[str, deque] = {}
+        for agent in self.agents:
+            door = agent.assigned_spawn
+            if door not in self.spawn_queues:
+                self.spawn_queues[door] = deque()
+            self.spawn_queues[door].append(agent)
+        # Shuffle within each door queue for randomness
+        for door in self.spawn_queues:
+            q = list(self.spawn_queues[door])
+            self.rng.shuffle(q)
+            self.spawn_queues[door] = deque(q)
 
         print(f"Simulation created with {len(self.agents)} passengers")
+        for door, q in self.spawn_queues.items():
+            print(f"  Door {door}: {len(q)} passengers")
 
     def _spawn_next(self) -> None:
-        """Attempt to spawn the next passenger(s) from the queue."""
-        spawned_this_tick = 0
-        while self.spawn_queue and spawned_this_tick < SPAWN_RATE:
-            agent = self.spawn_queue[0]
-            # Use middle door for Strategy 1
-            door_node = self.env.doors.get("M")
+        """Spawn up to SPAWN_RATE passengers per door per tick."""
+        for door_label, queue in self.spawn_queues.items():
+            door_node = self.env.doors.get(door_label)
             if door_node is None:
-                break
-            if door_node in self.occupied:
-                break  # door blocked, try next tick
-            # Spawn
-            agent.position = door_node
-            agent.spawned = True
-            self.occupied.add(door_node)
-            self.spawn_queue.popleft()
-            spawned_this_tick += 1
+                continue
+            spawned_this_tick = 0
+            while queue and spawned_this_tick < SPAWN_RATE:
+                if door_node in self.occupied:
+                    break
+                agent = queue.popleft()
+                agent.position = door_node
+                agent.spawned = True
+                self.occupied.add(door_node)
+                spawned_this_tick += 1
 
     def step(self) -> bool:
-        """
-        Execute one simulation tick.
-        Returns True if boarding is complete (all seated), False otherwise.
-        """
+        """One tick: Observe/Intent → Action/Commit."""
         self.tick += 1
-
-        # 1. Spawn
         self._spawn_next()
 
-        # 2. Shuffle agent update order for fairness
+        # Build lookups
+        agent_at: Dict[str, PassengerAgent] = {}
+        for a in self.agents:
+            if a.spawned and not a.seated and a.position is not None:
+                agent_at[a.position] = a
+        occupied = set(agent_at.keys())
+
+        # Phase A: evaluate intentions
         active = [a for a in self.agents if a.spawned and not a.seated]
         self.rng.shuffle(active)
-
-        # 3. Each active agent takes one action
         for agent in active:
-            agent.step(self.env, self.occupied)
+            agent.evaluate_intent(
+                self.env, occupied, self.agents_by_id, agent_at
+            )
 
-        # 4. Check completion
-        all_seated = all(a.seated for a in self.agents)
-        return all_seated
+        # Phase B: execute actions
+        next_positions: Dict[str, str] = {}
+        for agent in active:
+            agent.boarding_time += 1
+            agent.execute_action(
+                self.env, occupied, agent_at,
+                self.agents_by_id, next_positions, self.rng,
+            )
+
+        # Sync occupied set
+        self.occupied = set(next_positions.values())
+
+        # C1: completion
+        return all(a.seated for a in self.agents)
 
     def run(self) -> int:
-        """Run until boarding complete or MAX_TICKS. Returns total ticks."""
         print(f"\n{'='*60}")
         print(f"  BOARDING SIMULATION START  (Strategy 1: Random / M door)")
         print(f"{'='*60}\n")
 
         while self.tick < MAX_TICKS:
             done = self.step()
-
             if self.tick % REPORT_EVERY == 0 or done:
                 seated = sum(1 for a in self.agents if a.seated)
                 spawned = sum(1 for a in self.agents if a.spawned)
@@ -361,23 +984,25 @@ class BoardingSimulation:
                     f"  t={self.tick:>5d}  |  "
                     f"spawned={spawned:>3d}/{len(self.agents)}  |  "
                     f"seated={seated:>3d}/{len(self.agents)}  |  "
-                    f"queue={len(self.spawn_queue)}"
+                    f"queue={sum(len(q) for q in self.spawn_queues.values())}"
                 )
             if done:
                 break
 
-        # Summary
         total = self.tick
         seated_count = sum(1 for a in self.agents if a.seated)
         avg_boarding = (
-            sum(a.boarding_time for a in self.agents if a.seated) / max(seated_count, 1)
+            sum(a.boarding_time for a in self.agents if a.seated)
+            / max(seated_count, 1)
         )
         avg_wait = (
-            sum(a.wait_count for a in self.agents if a.seated) / max(seated_count, 1)
+            sum(a.wait_count for a in self.agents if a.seated)
+            / max(seated_count, 1)
         )
-        pax_with_luggage = sum(1 for a in self.agents if a.has_luggage)
+        pax_lug = sum(1 for a in self.agents if a.has_luggage)
         avg_stow = (
-            sum(a.stow_duration for a in self.agents if a.has_luggage) / max(pax_with_luggage, 1)
+            sum(a.stow_duration for a in self.agents if a.has_luggage)
+            / max(pax_lug, 1)
         )
 
         print(f"\n{'='*60}")
@@ -385,23 +1010,33 @@ class BoardingSimulation:
         print(f"{'='*60}")
         print(f"  Total boarding time : {total} ticks")
         print(f"  Passengers seated   : {seated_count} / {len(self.agents)}")
-        print(f"  Passengers w/ luggage: {pax_with_luggage} / {len(self.agents)}")
+        print(f"  Passengers w/ luggage: {pax_lug} / {len(self.agents)}")
         print(f"  Avg boarding time   : {avg_boarding:.1f} ticks/passenger")
         print(f"  Avg wait time       : {avg_wait:.1f} ticks/passenger")
         print(f"  Avg stow duration   : {avg_stow:.1f} ticks (luggage pax only)")
         print(f"{'='*60}\n")
 
-        # Sanity checks
         assert seated_count == len(self.agents), (
             f"Not all passengers seated! {seated_count}/{len(self.agents)}"
         )
         for a in self.agents:
             assert a.position == a.assigned_seat_node, (
-                f"Passenger {a.pax_id} not at seat! "
+                f"Pax {a.pax_id} not at seat! "
                 f"pos={a.position}, seat={a.assigned_seat_node}"
             )
         print("  ✅ All sanity checks passed.\n")
         return total
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _sign(x: int) -> int:
+    if x > 0:
+        return 1
+    elif x < 0:
+        return -1
+    return 0
 
 
 # ---------------------------------------------------------------------------
