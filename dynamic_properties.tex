@@ -1,0 +1,787 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage[colorinlistoftodos,prependcaption]{todonotes}
+
+\title{\textbf{Dynamic Properties of Passenger Agents}\\
+  \large Executable Update-Rule Format --- Full Predicate Model\\[0.5em]
+  \normalsize AE4422-20 Agent-Based Modelling and Simulation in Air Transport}
+\date{Delft University of Technology, \today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\listoftodos
+\newpage
+
+\subsection*{Formal Predicate Specification}
+
+To provide a complete formal representation of the agent-based boarding model, the system is described using a set of logical predicates. These predicates define the structural properties of the environment, the attributes and internal states of passenger agents, their local observations, and the actions they can perform. Together, they enable the behavioral rules described in the previous sections to be expressed formally as logical conditions over system states.
+
+The system evolves in discrete time steps $t \in \mathbb{N}$. Let $P$ denote the set of passenger agents, $N$ the set of nodes in the cabin movement graph, and $R$ the set of seat rows. The predicates defined below collectively describe the full system state $S(t)$ and the transitions between states.
+
+\paragraph{Environment Structure Predicates}
+
+\begin{itemize}
+
+\item $\text{Aisle}(n)$\\
+Node $n \in N$ represents an aisle location in the cabin movement graph.
+
+\item $\text{Seat}(n)$\\
+Node $n \in N$ represents a seat location corresponding to an assigned passenger seat.
+
+\item $\text{Edge}(n,n')$\\
+A directed edge exists between nodes $n$ and $n'$, meaning that a passenger can move from node $n$ to node $n'$ in one time step.
+
+\item $\text{Coord}(n,x,y)$\\
+Node $n$ has spatial coordinates $(x,y)$ in the cabin layout. These coordinates define the geometric structure of the aircraft cabin.
+
+\item $\text{Spawn}(n)$\\
+Node $n$ represents a boarding entry location where passengers may enter the aircraft.
+
+\item $\text{SeatRow}(n,r)$\\
+Seat node $n$ belongs to seat row $r \in R$. This predicate links seat locations to overhead bin resources defined per row.
+
+\end{itemize}
+
+\paragraph{Seat Assignment and Boarding Predicates}
+
+\begin{itemize}
+
+\item $\text{SeatOf}(p,n)$\\
+Passenger $p \in P$ is assigned seat node $n$.
+
+\item $\text{BoardSeq}(p,k)$\\
+Passenger $p$ has boarding sequence index $k$, determining the order in which passengers are released according to the boarding strategy.
+
+\item $\text{AssignedSpawn}(p,n)$\\
+Passenger $p$ is assigned to spawn at node $n$ when boarding begins.
+
+\end{itemize}
+
+\paragraph{Shared Resource Predicates}
+
+\begin{itemize}
+
+\item $\text{BinCap}(r,c)$\\
+Seat row $r$ has overhead bin capacity $c$.
+
+\item $\text{BinUse}(r,t,u)$\\
+At time $t$, $u$ luggage items are stored in the overhead bin associated with row $r$.
+
+\item $\text{BinAvailable}(r,t)$\\
+Overhead bin space is available in row $r$ at time $t$, defined as
+\[
+\text{BinAvailable}(r,t) \iff \exists u,c:\bigl[\text{BinUse}(r,t,u) \;\wedge\; \text{BinCap}(r,c) \;\wedge\; u < c\bigr].
+\]
+
+\end{itemize}
+
+\paragraph{Agent Attribute Predicates}
+
+\begin{itemize}
+
+\item $\text{HasLuggage}(p)$\\
+Passenger $p$ carries a piece of hand luggage that must be stowed in an overhead bin.
+
+\item $\text{PrefSpeed}(p,v)$\\
+Passenger $p$ has preferred forward walking speed $v$.
+
+\item $\text{LatSpeed}(p,v)$\\
+Passenger $p$ has lateral movement speed $v$ when switching aisles or clearing conflicts.
+
+\end{itemize}
+
+\paragraph{Dynamic Position and Occupancy Predicates}
+
+\begin{itemize}
+
+\item $\text{At}(p,n,t)$\\
+Passenger $p$ occupies node $n$ at time step $t$.
+
+\item $\text{Occupied}(n,t)$\\
+Node $n$ is occupied by some passenger at time $t$.
+
+\item $\text{Free}(n,t)$\\
+Node $n$ is free at time $t$, defined as
+\[
+\text{Free}(n,t) \iff \neg \text{Occupied}(n,t).
+\]
+
+\end{itemize}
+
+\paragraph{Passenger Internal State Predicates}
+
+\begin{itemize}
+
+\item $\text{Seated}(p,t)$\\
+Passenger $p$ is seated at their assigned seat at time $t$.
+
+\item $\text{Done}(p,t)$\\
+Passenger $p$ has completed the boarding process: they are seated and will no longer take any boarding action.
+
+\item $\text{LuggageState}(p,t,s)$\\
+Passenger $p$ has luggage state $s$ at time $t$, where
+\[
+s \in \{\text{none}, \text{unstowed}, \text{stowing}, \text{stowed}\}.
+\]
+
+\item $\text{RemainingStow}(p,t,\tau)$\\
+Passenger $p$ requires $\tau$ additional time steps to complete luggage stowage.
+
+\item $\text{WaitTime}(p,t,k)$\\
+Passenger $p$ has waited $k$ consecutive time steps without movement.
+
+\end{itemize}
+
+\paragraph{Observation Predicates}
+
+These predicates represent the locally observable information available to passenger agents.
+
+\begin{itemize}
+
+\item $\text{StepFeasible}(p,n,t)$\\
+Passenger $p$ can move from its current node to node $n$ at time $t$.
+
+\item $\text{ObsFree}(p,n,t)$\\
+Passenger $p$ observes node $n$ to be free at time $t$.
+
+\item $\text{ObsOccupied}(p,n,t)$\\
+Passenger $p$ observes node $n$ to be occupied at time $t$.
+
+\item $\text{DistSeat}(p,n)$\\
+Graph distance from node $n$ to passenger $p$'s assigned seat.
+
+\item $\text{CloserToSeat}(p,n,t)$\\
+Movement to node $n$ reduces the distance between passenger $p$ and their assigned seat.
+
+\end{itemize}
+
+\paragraph{Congestion and Queue Predicates}
+
+\begin{itemize}
+
+\item $\text{ForwardQueueLen}(p,t,k)$\\
+Passenger $p$ observes $k$ passengers ahead in the aisle queue, bounded by perception range.
+
+\item $\text{NoProgress}(p,t)$\\
+Passenger $p$ has no feasible movement that reduces distance to their seat.
+
+\item $\text{AltAisleFree}(p,t)$\\
+An adjacent connector node to an alternative aisle is available.
+
+\item $\text{AltAisleLessCongested}(p,t)$\\
+The alternative aisle appears sufficiently less congested to justify switching, accounting for switching cost.
+
+\end{itemize}
+
+\paragraph{Conflict Detection Predicates}
+
+\begin{itemize}
+
+\item $\text{HeadOn}(p,q,t)$\\
+Passengers $p$ and $q$ are in a head-on aisle conflict at time $t$.
+
+\item $\text{BehindCount}(p,t,k)$\\
+Passenger $p$ has $k$ passengers behind them in the aisle.
+
+\item $\text{RowEntryBlocked}(p,t)$\\
+Passenger $p$ cannot access their assigned row due to blocking passengers.
+
+\item $\text{BlockingRowEntry}(p,q,t)$\\
+Passenger $q$ blocks passenger $p$ from entering their seat row.
+
+\item $\text{RowEntryRequest}(p,q,t)$\\
+Passenger $p$ requests passenger $q$ to clear space for row entry.
+
+\end{itemize}
+
+\paragraph{Goal Proximity Predicates}
+
+\begin{itemize}
+
+\item $\text{InStowZone}(p,t)$\\
+Passenger $p$ is within the region where overhead bin stowage is permitted (near the assigned seat row).
+
+\end{itemize}
+
+\paragraph{Intention Predicates}
+
+\begin{itemize}
+
+\item $\text{Intent}(p,t,i)$\\
+Passenger $p$ adopts intention $i$ at time $t$, where
+\[
+i \in \{\text{advance}, \text{wait}, \text{switchAisle}, \text{resolveHeadOn}, \text{resolveSeatBlocked}, \text{stow}, \text{enterRow}, \text{sit}\}.
+\]
+
+\end{itemize}
+
+\paragraph{Action Predicates}
+
+\begin{itemize}
+
+\item $\text{Move}(p,n,t)$\\
+Passenger $p$ moves to node $n$ at time $t$.
+
+\item $\text{Stay}(p,t)$\\
+Passenger $p$ remains at the current node.
+
+\item $\text{StartStow}(p,r,t)$\\
+Passenger $p$ begins storing luggage in the overhead bin associated with row $r$.
+
+\item $\text{ContinueStow}(p,t)$\\
+Passenger $p$ continues the luggage stowage process.
+
+\item $\text{Sit}(p,t)$\\
+Passenger $p$ sits in their assigned seat.
+
+\end{itemize}
+
+\paragraph{Goal and Completion Predicates}
+
+\begin{itemize}
+
+\item $\text{GoalReached}(p,t)$\\
+Passenger $p$ has achieved their boarding goal.
+\[
+\text{GoalReached}(p,t) \iff \text{Seated}(p,t)
+\]
+
+\item $\text{BoardingComplete}(t)$\\
+The boarding process is complete when all passengers are seated:
+\[
+\text{BoardingComplete}(t) \iff \forall p \in P : \text{Seated}(p,t).
+\]
+
+\end{itemize}
+
+Together, these predicates define the complete logical representation of the boarding system and allow all behavioral rules governing passenger movement, conflict resolution, luggage storage, and seating to be expressed formally.
+
+%------------------------------------------------------------
+\section{Dynamic State Properties and Update Rules}
+%------------------------------------------------------------
+
+Given the predicates in the last section, the dynamic properties and update rules are further worked out. The semi-formal logic of how agents behave and act are described in the following subsections.
+
+%------------------------------------------------------------
+\paragraph{Position: $\text{At}(p,n,t)$}
+%------------------------------------------------------------
+
+A passenger's position changes only when a $\text{Move}$ action is executed;
+otherwise it is retained by $\text{Stay}$:
+
+\begin{align}
+  \text{At}(p,n,t{+}1) &\iff \text{Move}(p,n,t) \label{eq:at-move}\\
+  \text{At}(p,n,t{+}1) &\iff \text{At}(p,n,t) \;\wedge\; \text{Stay}(p,t) \label{eq:at-stay}
+\end{align}
+
+Movement speed constrains how frequently a $\text{Move}$ action can be issued.
+Specifically, $\text{PrefSpeed}(p,v)$ governs longitudinal movement along aisles, and
+$\text{LatSpeed}(p,v')$ governs lateral actions such as entering a seat row or yielding
+in a conflict. In the discrete-time model, these attributes determine the minimum number
+of ticks between consecutive move actions for each agent.
+
+%------------------------------------------------------------
+\paragraph{Occupancy: $\text{Occupied}(n,t)$, $\text{Free}(n,t)$}
+%------------------------------------------------------------
+
+The capacity of any node is maximum one agent; therefore, if any agent is at node $n$, the node is labelled occupied. If there is no agent at the node, it is labelled as free.
+
+\begin{align}
+  \text{Occupied}(n,t) &\iff \exists p \in P:\; \text{At}(p,n,t) \label{eq:occupied}\\
+  \text{Free}(n,t)     &\iff \neg\,\text{Occupied}(n,t)             \label{eq:free}
+\end{align}
+
+%------------------------------------------------------------
+\paragraph{Seating and Boarding Completion: $\text{Seated}(p,t)$, $\text{Done}(p,t)$}
+%------------------------------------------------------------
+
+If the agent can sit, and it is at the assigned seat, it will be seated. Once seated, the agent has completed all boarding actions and is marked as done. $\text{Done}$ signals completion of the boarding process --- it does not represent a generic terminal state, but specifically that the passenger has reached their seat and will take no further action.
+
+\begin{align}
+  \text{Seated}(p,t{+}1)
+    &\iff \bigl[\text{Sit}(p,t) \;\wedge\; \exists n:\bigl(\text{At}(p,n,t) \;\wedge\; \text{SeatOf}(p,n)\bigr)\bigr]
+          \;\vee\; \text{Seated}(p,t)
+    \label{eq:seated}\\[4pt]
+  \text{Done}(p,t{+}1)
+    &\iff \text{Seated}(p,t{+}1) \;\vee\; \text{Done}(p,t)
+    \label{eq:done}
+\end{align}
+
+%------------------------------------------------------------
+\paragraph{Luggage Handling: $\text{LuggageState}(p,t,s)$, $\text{RemainingStow}(p,t,\tau)$}
+%------------------------------------------------------------
+
+Let $\tau_0$ denote $p$'s stochastic stow duration, drawn at initialisation.
+The luggage lifecycle unfolds across three transitions; $\text{StartStow}$, $\text{ContinueStow}$ and $\text{RemainingStow}$. All attributes will be explained if showing dependencies and predicates.
+
+\begin{align}
+  \text{LuggageState}(p,t{+}1,\text{stowing})
+    &\iff \text{LuggageState}(p,t,\text{unstowed})
+          \;\wedge\; \exists r:\text{StartStow}(p,r,t)
+    \label{eq:lug-start}\\[3pt]
+  \text{LuggageState}(p,t{+}1,\text{stowing})
+    &\iff \text{LuggageState}(p,t,\text{stowing})
+          \;\wedge\; \text{ContinueStow}(p,t)
+          \;\wedge\; \neg\,\text{RemainingStow}(p,t,0)
+    \label{eq:lug-cont}\\[3pt]
+  \text{LuggageState}(p,t{+}1,\text{stowed})
+    &\iff \text{LuggageState}(p,t,\text{stowing})
+          \;\wedge\; \text{RemainingStow}(p,t,0)
+    \label{eq:lug-done}
+\end{align}
+
+The remaining stow time decrements each active stowing tick, and thus showing if stowing is still active:
+
+\begin{equation}
+  \text{RemainingStow}(p,t{+}1,\tau) \iff
+  \begin{cases}
+    \tau = \tau_0
+      & \text{if } \exists r:\text{StartStow}(p,r,t) \\[4pt]
+    \text{RemainingStow}(p,t,\tau{+}1)
+      & \text{if } \text{ContinueStow}(p,t) \;\wedge\; \neg\,\text{RemainingStow}(p,t,0) \\[4pt]
+    \tau = 0
+      & \text{otherwise}
+  \end{cases}
+  \label{eq:remstow}
+\end{equation}
+
+The bin usage is updated when the stowing begins, and it is assumed that the process will finish. The available capacity is checked by the $\text{BinAvailable}$ predicate.
+
+\begin{align}
+  \text{BinUse}(r,t{+}1,u{+}1)
+    &\iff \text{BinUse}(r,t,u) \;\wedge\; \exists p:\text{StartStow}(p,r,t)
+    \label{eq:binuse}\\[3pt]
+  \text{BinAvailable}(r,t)
+    &\iff \exists u,c:\bigl[\text{BinUse}(r,t,u) \;\wedge\; \text{BinCap}(r,c) \;\wedge\; u < c\bigr]
+    \label{eq:binavail}
+\end{align}
+
+%------------------------------------------------------------
+\paragraph{Patience Counter: $\text{WaitTime}(p,t,k)$}
+%------------------------------------------------------------
+
+The patience counter memorises the waited time of an agent. The counter resets to zero upon successful movement and increments otherwise:
+
+\begin{align}
+  \text{WaitTime}(p,t{+}1,0)
+    &\iff \exists n:\text{Move}(p,n,t) \label{eq:wait-reset}\\[3pt]
+  \text{WaitTime}(p,t{+}1,k{+}1)
+    &\iff \text{Stay}(p,t) \;\wedge\; \text{WaitTime}(p,t,k) \label{eq:wait-inc}
+\end{align}
+
+%------------------------------------------------------------
+\section{Derived Observation Properties}
+%------------------------------------------------------------
+
+Agents have \emph{local} perception only: they observe the state of nodes within a
+$k_{\text{obs}}$-hop neighbourhood around their current position.
+These predicates are derived from the global state each tick but represent
+what agent $p$ can locally perceive.
+The helper predicate $\text{InRange}(p,n,t)$ holds if and only if $n$ is reachable from $p$'s
+current position via at most $k_{\text{obs}}$ applications of $\text{Edge}$.
+
+%------------------------------------------------------------
+\paragraph{$\text{ObsFree}(p,n,t)$ and $\text{ObsOccupied}(p,n,t)$}
+%------------------------------------------------------------
+
+Agent $p$ observes node $n$ as free or occupied when $n$ lies within the
+perception horizon:
+
+\begin{align}
+  \text{ObsFree}(p,n,t)
+    &\iff \text{InRange}(p,n,t) \;\wedge\; \text{Free}(n,t) \label{eq:obsfree}\\[3pt]
+  \text{ObsOccupied}(p,n,t)
+    &\iff \text{InRange}(p,n,t) \;\wedge\; \text{Occupied}(n,t) \label{eq:obsoccupied}
+\end{align}
+
+%------------------------------------------------------------
+\paragraph{$\text{StepFeasible}(p,n,t)$}
+%------------------------------------------------------------
+
+A step to $n$ is feasible when an edge exists from $p$'s current position to $n$
+and $n$ is observed free:
+
+\begin{equation}
+  \text{StepFeasible}(p,n,t)
+  \iff \exists m:\bigl[\text{At}(p,m,t) \;\wedge\; \text{Edge}(m,n)\bigr]
+       \;\wedge\; \text{ObsFree}(p,n,t)
+  \label{eq:stepfeasible}
+\end{equation}
+
+Feasibility applies to both aisle nodes ($\text{Aisle}(n)$) and seat nodes
+($\text{Seat}(n)$) depending on the phase of the agent's journey.
+
+%------------------------------------------------------------
+\paragraph{$\text{DistSeat}(p,n)$ and $\text{CloserToSeat}(p,n,t)$}
+%------------------------------------------------------------
+
+$\text{DistSeat}(p,n)$ is the graph distance from node $n$ to passenger $p$'s
+assigned seat. It is static (the graph and seat assignment do not change) and can be
+precomputed from $\text{SeatOf}(p,n_s)$ and $\text{Coord}(n,x,y)$:
+
+\begin{equation}
+  \text{CloserToSeat}(p,n,t)
+  \iff \exists m:\bigl[\text{At}(p,m,t) \;\wedge\; \text{DistSeat}(p,n) < \text{DistSeat}(p,m)\bigr]
+  \label{eq:closertoseat}
+\end{equation}
+
+%------------------------------------------------------------
+\paragraph{$\text{ForwardQueueLen}(p,t,k)$}
+%------------------------------------------------------------
+
+$\text{ForwardQueueLen}(p,t,k)$ holds when exactly $k$ other passengers are observed
+ahead of $p$ in the same aisle \emph{within perception range}.
+Let $\text{AheadInAisle}(p,n,t)$ hold iff $\text{InRange}(p,n,t)$, $\text{Aisle}(n)$,
+and $\text{DistSeat}(p,n) < \text{DistSeat}(p,m_p)$ where $\text{At}(p,m_p,t)$:
+
+\begin{equation}
+  \text{ForwardQueueLen}(p,t,k)
+  \iff k = \bigl|\{q \in P \mid q \neq p,\;
+                   \exists n:\text{AheadInAisle}(p,n,t) \;\wedge\; \text{ObsOccupied}(p,n,t) \;\wedge\; \text{At}(q,n,t)\}\bigr|
+  \label{eq:fwdqueue}
+\end{equation}
+
+\todo[color=orange]{The observation range $k_{\text{obs}}$ limits the number of passengers visible ahead; the count $k$ is therefore bounded by the perception horizon, not the full aisle queue.}
+
+%------------------------------------------------------------
+\paragraph{$\text{NoProgress}(p,t)$}
+%------------------------------------------------------------
+
+Agent $p$ observes no progress when no feasible step brings it closer to its seat:
+
+\begin{equation}
+  \text{NoProgress}(p,t)
+  \iff \neg\,\exists n:\bigl[\text{StepFeasible}(p,n,t) \;\wedge\; \text{CloserToSeat}(p,n,t)\bigr]
+  \label{eq:noprogress}
+\end{equation}
+
+%------------------------------------------------------------
+\paragraph{$\text{InStowZone}(p,t)$}
+%------------------------------------------------------------
+
+Agent $p$ is in the stow zone when it currently occupies an aisle node that belongs to the
+same seat row as the passenger's assigned seat:
+
+\begin{equation}
+  \text{InStowZone}(p,t)
+  \iff \exists m,n_s,r:\bigl[
+    \text{At}(p,m,t) \;\wedge\; \text{Aisle}(m) \;\wedge\; \text{SeatRow}(m,r)
+    \;\wedge\; \text{SeatOf}(p,n_s) \;\wedge\; \text{SeatRow}(n_s,r)
+  \bigr]
+  \label{eq:instowzone}
+\end{equation}
+
+\todo[color=orange]{This definition requires that each aisle node be assigned to a seat row via $\text{SeatRow}$. Confirm this is consistent with the graph construction.}
+
+%------------------------------------------------------------
+\paragraph{$\text{AltAisleFree}(p,t)$ and $\text{AltAisleLessCongested}(p,t)$}
+%------------------------------------------------------------
+
+The alternative aisle has a free connector node adjacent to $p$'s current position:
+
+\begin{equation}
+  \text{AltAisleFree}(p,t)
+  \iff \exists m,n:\bigl[
+    \text{At}(p,m,t) \;\wedge\; \text{Edge}(m,n) \;\wedge\; \text{Aisle}(n) \;\wedge\; \text{ObsFree}(p,n,t)
+  \bigr]
+  \label{eq:altaislefree}
+\end{equation}
+
+The alternative aisle is considered less congested when its forward queue is shorter than
+the current aisle's queue by at least switching cost margin $\delta > 0$, ensuring that a
+switch is only attempted when there is a meaningful benefit:
+
+\begin{equation}
+  \text{AltAisleLessCongested}(p,t)
+  \iff \exists k_{\text{cur}}, k_{\text{alt}}:\bigl[
+    \text{ForwardQueueLen}(p,t,k_{\text{cur}}) \;\wedge\;
+    \text{ForwardQueueAlt}(p,t,k_{\text{alt}}) \;\wedge\;
+    k_{\text{alt}} < k_{\text{cur}} - \delta
+  \bigr]
+  \label{eq:altlesscong}
+\end{equation}
+
+\todo[color=orange]{The switching cost margin $\delta$ is a tuning parameter. It models the cost of switching aisles (time lost during lateral movement) and should prevent unnecessary switches when queues are nearly equal.}
+
+where $\text{ForwardQueueAlt}$ is defined analogously to $\text{ForwardQueueLen}$
+but counts passengers ahead in the alternative aisle.
+
+%------------------------------------------------------------
+\section{Conflict Detection Properties}
+%------------------------------------------------------------
+
+In the conflict detection section, the properties and functions are described to give understanding of the logic in the semi-formal description.
+
+%------------------------------------------------------------
+\paragraph{$\text{HeadOn}(p,q,t)$}
+%------------------------------------------------------------
+
+A head-on conflict occurs when $q$ occupies the node that $p$'s next move would target,
+and $p$ occupies the node that $q$'s next move would target.
+Because the target node is already occupied, $\text{StepFeasible}$ (which requires
+$\text{Free}$) cannot be used; edge-reachability is used directly. Furthermore, a conflict
+is only detected if the opposing passenger is within the locally observable range:
+
+\begin{equation}
+  \text{HeadOn}(p,q,t)
+  \iff p \neq q 
+       \;\wedge\; \exists n:\bigl[ \text{At}(q,n,t) \;\wedge\; \text{InRange}(p,n,t) \bigr]
+       \;\wedge\; \exists m,n:\bigl[\text{At}(p,m,t) \;\wedge\; \text{Edge}(m,n) \;\wedge\; \text{At}(q,n,t)\bigr]
+       \;\wedge\;             \bigl[\text{At}(q,n,t) \;\wedge\; \text{Edge}(n,m) \;\wedge\; \text{At}(p,m,t)\bigr]
+  \label{eq:headon}
+\end{equation}
+
+%------------------------------------------------------------
+\paragraph{$\text{BehindCount}(p,t,k)$}
+%------------------------------------------------------------
+
+$\text{BehindCount}(p,t,k)$ holds when exactly $k$ passengers are in the same aisle
+behind $p$ within the backward perception radius:
+
+\begin{equation}
+  \text{BehindCount}(p,t,k)
+  \iff k = \bigl|\{q \in P \mid q \neq p,\;
+                   \exists n:\text{BehindInAisle}(p,n,t) \;\wedge\; \text{At}(q,n,t)\}\bigr|
+  \label{eq:behindcount}
+\end{equation}
+
+where $\text{BehindInAisle}(p,n,t)$ holds iff $\text{InRange}(p,n,t)$, $\text{Aisle}(n)$, and
+$\text{DistSeat}(p,n) > \text{DistSeat}(p,m_p)$ with $\text{At}(p,m_p,t)$.
+
+%------------------------------------------------------------
+\paragraph{$\text{BlockingRowEntry}(p,q,t)$ and $\text{RowEntryBlocked}(p,t)$}
+%------------------------------------------------------------
+
+Passenger $q$ blocks passenger $p$ from entering their seat row when $q$ occupies
+a node in $p$'s seat row that $p$ has a direct edge towards:
+
+\begin{align}
+  \text{BlockingRowEntry}(p,q,t)
+    &\iff p \neq q
+          \;\wedge\; \exists m,n,r:\bigl[
+            \text{At}(p,m,t) \;\wedge\; \text{Edge}(m,n) \;\wedge\; \text{At}(q,n,t)
+            \notag\\
+    &\phantom{{}\iff p \neq q \;\wedge\; \exists m,n,r:\bigl[{}}
+            \;\wedge\; \text{SeatRow}(n,r)
+            \;\wedge\; \exists n_s:\bigl(\text{SeatOf}(p,n_s) \;\wedge\; \text{SeatRow}(n_s,r)\bigr)
+          \bigr]
+    \label{eq:blocking}\\[4pt]
+  \text{RowEntryBlocked}(p,t)
+    &\iff \exists q:\text{BlockingRowEntry}(p,q,t)
+    \label{eq:rowblocked}
+\end{align}
+
+%------------------------------------------------------------
+\paragraph{$\text{RowEntryRequest}(p,q,t)$}
+%------------------------------------------------------------
+
+Passenger $p$ sends a clear-space request to $q$ when $q$ blocks $p$'s row entry and $p$'s
+luggage precondition for row entry is satisfied:
+
+\begin{equation}
+  \text{RowEntryRequest}(p,q,t)
+  \iff \text{BlockingRowEntry}(p,q,t)
+       \;\wedge\; \bigl(\neg\,\text{HasLuggage}(p) \;\vee\; \text{LuggageState}(p,t,\text{stowed})\bigr)
+  \label{eq:rowentryrequest}
+\end{equation}
+
+%------------------------------------------------------------
+\section{Intention Selection: $\text{Intent}(p,t,i)$}
+%------------------------------------------------------------
+
+The active intention is re-evaluated every tick. Rules are tested in order; the first
+satisfied condition determines $\text{Intent}(p,t,i)$.
+
+\medskip
+\noindent\textbf{R0 --- Boarding complete.}
+
+Once a passenger has completed boarding (is seated), they wait indefinitely and take no further action:
+\begin{equation}
+  \text{Done}(p,t)
+  \;\Rightarrow\; \text{Intent}(p,t,\text{wait})
+  \label{eq:R0}
+\end{equation}
+
+\medskip
+\noindent\textbf{R1 --- Stow luggage.}
+Stowing begins when a passenger with unstowed luggage enters the stow zone and
+observes an available bin; the intention persists until stowage is complete:
+\begin{align}
+  &\text{HasLuggage}(p)
+    \;\wedge\; \text{LuggageState}(p,t,\text{unstowed})
+    \;\wedge\; \text{InStowZone}(p,t)
+    \;\wedge\; \exists r:\text{BinAvailable}(r,t)
+    \;\wedge\; \neg\,\text{Done}(p,t)
+    \;\Rightarrow\; \text{Intent}(p,t,\text{stow}) \label{eq:R1a}\\[3pt]
+  &\text{LuggageState}(p,t,\text{stowing})
+    \;\wedge\; \neg\,\text{RemainingStow}(p,t,0)
+    \;\Rightarrow\; \text{Intent}(p,t,\text{stow}) \label{eq:R1b}
+\end{align}
+
+\medskip
+\noindent\textbf{R2 --- Sit.}
+\begin{equation}
+  \exists n:\bigl[\text{At}(p,n,t) \;\wedge\; \text{SeatOf}(p,n)\bigr]
+  \;\wedge\; \bigl(\neg\,\text{HasLuggage}(p) \;\vee\; \text{LuggageState}(p,t,\text{stowed})\bigr)
+  \;\wedge\; \neg\,\text{Done}(p,t)
+  \;\Rightarrow\; \text{Intent}(p,t,\text{sit})
+  \label{eq:R2}
+\end{equation}
+
+\medskip
+\noindent\textbf{R3 --- Resolve seat block.}
+Two cases: (a) $p$ is blocking another passenger who has sent a request; (b) $p$'s own
+row entry is blocked.
+
+\begin{align}
+  &\exists q:\text{RowEntryRequest}(q,p,t)
+    \;\Rightarrow\; \text{Intent}(p,t,\text{resolveSeatBlocked})
+    \label{eq:R3a}\\[3pt]
+  &\text{RowEntryBlocked}(p,t)
+    \;\wedge\; \bigl(\neg\,\text{HasLuggage}(p) \;\vee\; \text{LuggageState}(p,t,\text{stowed})\bigr)
+    \;\Rightarrow\; \text{Intent}(p,t,\text{resolveSeatBlocked})
+    \label{eq:R3b}
+\end{align}
+
+\medskip
+\noindent\textbf{R4 --- Resolve head-on.}
+\begin{equation}
+  \exists q:\text{HeadOn}(p,q,t)
+  \;\Rightarrow\; \text{Intent}(p,t,\text{resolveHeadOn})
+  \label{eq:R4}
+\end{equation}
+
+Right-of-way is determined by the following rule. Let $k_p, k_q$ be the counts in
+$\text{BehindCount}(p,t,k_p)$ and $\text{BehindCount}(q,t,k_q)$.
+Passenger $p$ yields when:
+\begin{equation}
+  \bigl(\neg\,\text{HasLuggage}(p) \;\wedge\; \text{HasLuggage}(q)\bigr)
+  \;\vee\;
+  \bigl(\text{HasLuggage}(p) = \text{HasLuggage}(q) \;\wedge\; k_p < k_q\bigr)
+  \label{eq:rightofway}
+\end{equation}
+
+Yielding is executed via $\text{Move}(p,n,t)$ to a free connector node if
+$\text{ObsFree}(p,n,t)$ and $\text{Edge}(m,n)$ with $\text{At}(p,m,t)$; otherwise via
+$\text{Stay}(p,t)$.
+
+\medskip
+\noindent\textbf{R5 --- Switch aisle.}
+
+Let $\kappa_p$ denote $p$'s patience threshold (static attribute).
+\begin{equation}
+  \text{WaitTime}(p,t,k) \;\wedge\; k \geq \kappa_p
+  \;\wedge\; \text{NoProgress}(p,t)
+  \;\wedge\; \text{AltAisleFree}(p,t)
+  \;\wedge\; \text{AltAisleLessCongested}(p,t)
+  \;\Rightarrow\; \text{Intent}(p,t,\text{switchAisle})
+  \label{eq:R5}
+\end{equation}
+
+\medskip
+\noindent\textbf{R6 --- Default advance toward seat.}
+
+The agent uses $\text{ObsFree}$ and $\text{ObsOccupied}$ to identify passable nodes,
+$\text{DistSeat}$ together with $\text{Coord}$ to rank candidates, and selects the
+step that minimises distance:
+
+\begin{equation}
+  \exists n:\bigl[\text{StepFeasible}(p,n,t) \;\wedge\; \text{CloserToSeat}(p,n,t)\bigr]
+  \;\Rightarrow\; \text{Intent}(p,t,\text{advance})
+  \label{eq:R6}
+\end{equation}
+
+\medskip
+\noindent\textbf{R6$'$ --- Wait (default fallback).}
+\begin{equation}
+  \neg\bigl(\text{R0} \vee \text{R1} \vee \text{R2} \vee \text{R3}
+            \vee \text{R4} \vee \text{R5} \vee \text{R6}\bigr)
+  \;\Rightarrow\; \text{Intent}(p,t,\text{wait})
+  \label{eq:R6p}
+\end{equation}
+
+%------------------------------------------------------------
+\section{Action Selection from Intentions}
+%------------------------------------------------------------
+
+The final phase of an agent's update cycle maps the selected intention back into an executable action. These rules define the physical transition triggered by each intention state.
+
+\paragraph{Basic Actions.}
+For straightforward intentions, the mapping is direct:
+\begin{align*}
+  \text{Intent}(p,t,\text{wait}) &\implies \text{Stay}(p,t) \\
+  \text{Intent}(p,t,\text{sit}) &\implies \text{Sit}(p,t) \\
+  \text{Intent}(p,t,\text{stow}) \;\wedge\; \text{LuggageState}(p,t,\text{unstowed}) &\implies \text{StartStow}(p,r,t) \\
+  \text{Intent}(p,t,\text{stow}) \;\wedge\; \text{LuggageState}(p,t,\text{stowing}) &\implies \text{ContinueStow}(p,t) \\
+  \text{Intent}(p,t,\text{advance}) &\implies \text{Move}(p,n^*,t) \quad \text{(where $n^*$ minimises distance to seat)} \\
+  \text{Intent}(p,t,\text{switchAisle}) &\implies \text{Move}(p,n_{\text{alt}},t)
+\end{align*}
+
+\paragraph{Conflict Resolution Actions: Head-On.}
+When $\text{Intent}(p,t,\text{resolveHeadOn})$ is active, the agent evaluates right-of-way (Equation~\ref{eq:rightofway}). Let $q$ be the opposing passenger in the conflict.
+\begin{itemize}
+    \item \textbf{Yielding passenger ($p$ yields):} $p$ attempts to clear the corridor. If an adjacent free node out of the aisle is available (e.g., a connector or galley node $n_{\text{clear}}$), $p$ executes $\text{Move}(p,n_{\text{clear}},t)$. Otherwise, $p$ executes $\text{Stay}(p,t)$ and waits for an opening.
+    \item \textbf{Priority passenger ($q$ has right-of-way):} $q$ maintains their expected path. If the target node $n$ is vacated by $p$, $q$ executes $\text{Move}(q,n,t)$. If $n$ remains occupied, $q$ executes $\text{Stay}(q,t)$.
+\end{itemize}
+
+\paragraph{Conflict Resolution Actions: Seat/Row Entry Block.}
+When $\text{Intent}(p,t,\text{resolveSeatBlocked})$ is active, a coordinated clearing maneuver is required.
+\begin{itemize}
+    \item \textbf{Entering Passenger:} The passenger $p$ attempting entry maintains the clear-space request and executes $\text{Stay}(p,t)$ while the seat nodes are occupied. Once the required nodes in the seat row are observed free, $p$ executes $\text{Move}(p,n_{\text{row}},t)$ to enter.
+    \item \textbf{Blocking Passenger(s):} A blocking passenger $q$ must clear the blockage. If $q$ is nearest the aisle, $q$ temporarily executes $\text{Move}(q,n_{\text{aisle}},t)$ into an available aisle node to allow $p$ to pass. If multiple blockers exist, they execute sequential shifts to clear the required column, cascading into the aisle or executing a direct discrete swap maneuver with the entering passenger depending on local adjacency and cabin class configuration.
+\end{itemize}
+
+%------------------------------------------------------------
+\section{Initial Conditions at $t = 0$}
+%------------------------------------------------------------
+
+The initial state is constructed from the static predicates before any agent acts.
+
+\paragraph{Passenger spawn positions.}
+Each passenger enters at their assigned spawn node, released in boarding sequence order.
+Let $T_k$ be the release time of the passenger with $\text{BoardSeq}(p,k)$:
+
+\begin{equation}
+  \text{AssignedSpawn}(p,n) \;\wedge\; \text{Spawn}(n)
+  \;\Rightarrow\; \text{At}(p,n,T_k)
+  \label{eq:spawn}
+\end{equation}
+
+\paragraph{Luggage initialisation.}
+\begin{align}
+  \text{HasLuggage}(p) &\;\Rightarrow\; \text{LuggageState}(p,0,\text{unstowed}) \\
+  \neg\,\text{HasLuggage}(p) &\;\Rightarrow\; \text{LuggageState}(p,0,\text{none})
+\end{align}
+
+\paragraph{Bin occupancy.}
+\begin{equation}
+  \text{BinUse}(r,0,0) \quad \forall r \in R
+\end{equation}
+
+\paragraph{Counter initialisation.}
+\begin{align}
+  \text{WaitTime}(p,0,0) &\quad \forall p \in P \\
+  \text{RemainingStow}(p,0,0) &\quad \forall p \in P
+\end{align}
+
+\paragraph{Flags.}
+$\text{Seated}(p,0) = \text{false}$ and $\text{Done}(p,0) = \text{false}$ for all $p \in P$.
+Both flags become true only after the corresponding boarding action completes during the simulation.
+
+%------------------------------------------------------------
+\section{Goal and Completion Predicates}
+%------------------------------------------------------------
+
+\begin{align}
+  \text{GoalReached}(p,t)    &\iff \text{Seated}(p,t) \label{eq:goal}\\[4pt]
+  \text{BoardingComplete}(t) &\iff \forall p \in P:\; \text{Seated}(p,t) \label{eq:complete}
+\end{align}
+
+\end{document}
