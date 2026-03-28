@@ -235,7 +235,7 @@ class BoardingVisualiser:
                 glow_color = None
                 if agent.intent == "resolveHeadOn":
                     glow_color = (255, 50, 50, 100) # Red glow
-                elif agent.intent == "resolveSeatBlocked":
+                elif agent.intent == "resolveSeatBlock":
                     glow_color = (180, 50, 255, 100) # Purple glow
                 elif agent.intent == "switchAisle":
                     glow_color = (50, 200, 255, 100) # Cyan glow
@@ -267,7 +267,7 @@ class BoardingVisualiser:
         spawned = sum(1 for a in self.sim.agents if a.spawned)
         stowing = sum(1 for a in self.sim.agents if a.luggage_status == "stowing")
         total = len(self.sim.agents)
-        queue_len = len(self.sim.spawn_queue)
+        queue_len = sum(len(q) for q in self.sim.spawn_queues.values())
 
         # Title bar
         self.font_big.render_to(self.screen, (20, 20), WINDOW_TITLE, ACCENT)
@@ -280,7 +280,7 @@ class BoardingVisualiser:
             f"Seated: {seated}/{total}",
             f"Stowing: {stowing}",
             f"Head-on: {sum(1 for a in self.sim.agents if a.intent == 'resolveHeadOn')}",
-            f"Shuffles: {sum(1 for a in self.sim.agents if a.intent == 'resolveSeatBlocked')}",
+            f"Shuffles: {sum(1 for a in self.sim.agents if a.intent == 'resolveSeatBlock')}",
             f"Speed: {1000 // self.tick_delay:.0f} tps" if self.tick_delay > 0 else "Speed: MAX",
         ]
         x = 20
