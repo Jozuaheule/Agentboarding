@@ -75,7 +75,7 @@ li { margin-bottom: 5px; }
 <ul>
 <li><strong>Micro-Maneuver Seat Shuffles (A7, A8, A9, A10):</strong></li>
 <li><strong>Equations:</strong> Defines highly granular micro-steps for squeezing (<code>squeezeWith(q)</code>): outward shift inside the row, outward shift into the aisle, reciprocal maneuvers, etc. </li>
-<li><strong>Code Reality:</strong> Simplified. The simulation executes <code>resolveSeatBlocked</code> (R3) as an instantaneous, high-level cascade permutation. The simulation evaluates the blockers, instantly pushes them off the seat nodes into the aisle/refuge, executes the passenger swap, and updates the array. Tick-by-tick coordinate geometry of squeezing limbs past each other is not modelled graphically.</li>
+<li><strong>Code Reality:</strong> Fully simplified via Time Penalty substitution. The simulation bypasses limb interactions by instituting a randomized time penalty (Aisle Block delay) proportional to the delay physically required to clear the seat. Crucially, this penalty is structurally enforced each and every time an incoming passenger must maneuver past any occupant already mapping to an intermediate seat node strictly between the aisle access and their destination (e.g., a window passenger traversing a previously occupied middle or aisle seat). The agent halts on the aisle access node during this delay, natively functioning as an active longitudinal bottleneck. Upon timer completion, they bypass continuous physical bounding-box geometry and teleport directly into their final seat coordinate.</li>
 </ul>
 <h3>3. Modified Formal Properties</h3>
 <ul>
@@ -91,6 +91,12 @@ li { margin-bottom: 5px; }
 <li><strong>Galley Navigation Hierarchy (Missing Formal Rule):</strong></li>
 <li><strong>The Missing Link:</strong> Because A17 is removed, R-aisle assigned passengers injected at the L-door (Door M) <em>must</em> cross physically through the galleys. However, utilizing <code>rowCloserIfMoveTo</code> initially causes them to walk down the wrong longitudinal axis because passing laterally through the galley often increases absolute distance from their numerical row destination math.</li>
 <li><strong>Code Reality:</strong> An explicit priority hierarchy was engineered into the <code>advance</code> rule. <em>If a passenger occupies an aisle differing from their assignment</em>, they dynamically discard <code>rowCloserIfMoveTo</code> and exclusively prioritize <code>colCloserIfMoveTo</code>. This predictably funnels cross-side passengers strictly laterally along the $y$-axis via Manhattan distance until their $y$-coordinate geometrically matches their assigned aisle. This forces seamless cross-galley navigation while retaining 100% formal predictability.</li>
+</ul>
+<h3>5. Temporal Mapping & Calibration</h3>
+<ul>
+<li><strong>Fundamental Equation:</strong> To bridge physical parameters into mathematical ticks, the architecture explicitly assumes <strong>1 Tick = 0.8 Seconds</strong> based on a standard 0.8m seat longitudinal pitch boundary mapped against a halved baseline walking velocity framework.</li>
+<li><strong>Passenger Velocities:</strong> The execution constraints dictate speed by gating node progressions: taking 2 ticks to advance equals a 0.5 m/s maximum cadence ($0.8\text{m}/1.6\text{s}$). A passenger governed by a 4-tick progression perfectly models a natively slowed 0.25 m/s trajectory.</li>
+<li><strong>Penalty Conversions:</strong> Complex physical stalls natively convert into ticks by dividing literal physical duration in seconds by $0.8$. Because of this, a generated $15\text{-}45\text{s}$ luggage stowage mechanically executes as $\sim19\text{-}56$ simulation ticks, and a $30\text{-}60\text{s}$ seat clash evaluates mathematically as $\sim37\text{-}75$ simulator ticks.</li>
 </ul>
 <hr />
 <h2>Visualiser Adjustments</h2>

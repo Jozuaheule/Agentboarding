@@ -92,7 +92,8 @@ class BoardingVisualiser:
 
         # Set up environment & simulation
         self.env = CabinEnvironment(NODES_FILE, EDGES_FILE)
-        self.sim: Optional[BoardingSimulation] = None
+        self.sim_std: Optional[BoardingSimulation] = None
+        self.sim_pyramid: Optional[BoardingSimulation] = None
         self._reset_simulation()
 
         # Compute coordinate mapping
@@ -122,7 +123,8 @@ class BoardingVisualiser:
         self._load_pax_classes()
 
     def _reset_simulation(self) -> None:
-        self.sim = BoardingSimulation(self.env, MANIFEST_FILE, seed=SEED)
+        self.sim_std = BoardingSimulation(self.env, MANIFEST_FILE, seed=SEED, boarding_policy="std")
+        self.sim_pyramid = BoardingSimulation(self.env, MANIFEST_FILE, seed=SEED, boarding_policy="pyramid")
         self.done = False
 
     def _load_pax_classes(self) -> None:
@@ -145,8 +147,8 @@ class BoardingVisualiser:
         data_h = self.data_y_max - self.data_y_min or 1
 
         # Cap to reasonable screen size; cabin is very wide (125×10)
-        max_win_w = 1600
-        max_win_h = 650
+        max_win_w = 1200
+        max_win_h = 550
         available_w = max_win_w - MARGIN_LEFT - MARGIN_RIGHT
         available_h = max_win_h - MARGIN_TOP - MARGIN_BOTTOM
 
@@ -157,9 +159,10 @@ class BoardingVisualiser:
 
         self.draw_w = int(data_w * self.scale)
         self.draw_h = int(data_h * self.scale)
+        self.y_offset = self.draw_h + 120
 
         self.win_w = self.draw_w + MARGIN_LEFT + MARGIN_RIGHT
-        self.win_h = self.draw_h + MARGIN_TOP + MARGIN_BOTTOM
+        self.win_h = self.draw_h * 2 + 120 + MARGIN_TOP + MARGIN_BOTTOM
 
         # Precompute node screen positions
         self.node_pos: Dict[str, Tuple[int, int]] = {}
@@ -177,40 +180,43 @@ class BoardingVisualiser:
 
     # --- Drawing ---
 
-    def _draw_edges(self) -> None:
+    def _draw_edges(self, offset_y: int = 0) -> None:
         for u, v in self.env.graph.edges():
             p1 = self.node_pos.get(u)
             p2 = self.node_pos.get(v)
             if p1 and p2:
-                pygame.draw.aaline(self.screen, EDGE_COLOR, p1, p2)
+                pygame.draw.aaline(self.screen, EDGE_COLOR, (p1[0], p1[1] + offset_y), (p2[0], p2[1] + offset_y))
 
-    def _draw_nodes(self) -> None:
+    def _draw_nodes(self, offset_y: int = 0) -> None:
         for nid, data in self.env.graph.nodes(data=True):
-            pos = self.node_pos.get(nid)
-            if not pos:
+            p = self.node_pos.get(nid)
+            if not p:
                 continue
+            pos = (p[0], p[1] + offset_y)
             color = NODE_COLORS.get(data.get("type", "aisle"), NODE_COLORS["aisle"])
             pygame.draw.circle(self.screen, color, pos, NODE_RADIUS)
 
         # Highlight doors
         for label, door_id in self.env.doors.items():
-            pos = self.node_pos.get(door_id)
-            if pos:
+            p = self.node_pos.get(door_id)
+            if p:
+                pos = (p[0], p[1] + offset_y)
                 pygame.draw.circle(self.screen, DOOR_COLOR, pos, DOOR_RADIUS, 2)
                 self.font_sm.render_to(
                     self.screen, (pos[0] - 4, pos[1] - DOOR_RADIUS - 16),
                     label, DOOR_COLOR
                 )
 
-    def _draw_passengers(self) -> None:
-        if not self.sim:
+    def _draw_passengers(self, sim: BoardingSimulation, offset_y: int = 0) -> None:
+        if not sim:
             return
-        for agent in self.sim.agents:
+        for agent in sim.agents:
             if not agent.spawned or agent.position is None:
                 continue
-            pos = self.node_pos.get(agent.position)
-            if not pos:
+            p = self.node_pos.get(agent.position)
+            if not p:
                 continue
+            pos = (p[0], p[1] + offset_y)
 
             travel_class = self.pax_class.get(agent.pax_id, "economy")
             base_color = PAX_COLORS.get(travel_class, PAX_DEFAULT)
@@ -236,7 +242,10 @@ class BoardingVisualiser:
                 if agent.intent == "resolveHeadOn":
                     glow_color = (255, 50, 50, 100) # Red glow
                 elif agent.intent == "resolveSeatBlock":
-                    glow_color = (180, 50, 255, 100) # Purple glow
+                    if getattr(agent, "seat_shuffle_delay", 0) > 0:
+                        glow_color = (255, 255, 50, 150) # Strong Yellow glow targeting penalty
+                    else:
+                        glow_color = (180, 50, 255, 100) # Purple glow
                 elif agent.intent == "switchAisle":
                     glow_color = (50, 200, 255, 100) # Cyan glow
                 elif agent.intent == "advance":
@@ -258,30 +267,28 @@ class BoardingVisualiser:
                 pygame.draw.circle(self.screen, base_color, pos, PAX_RADIUS)
                 pygame.draw.circle(self.screen, (255, 255, 255), pos, PAX_RADIUS, 1)
 
-    def _draw_hud(self) -> None:
-        """Draw the heads-up display with stats and controls."""
-        if not self.sim:
+    def _draw_hud_for_sim(self, sim: BoardingSimulation, offset_y: int, title: str) -> None:
+        """Draw HUD components for a particular simulation."""
+        if not sim:
             return
 
-        seated = sum(1 for a in self.sim.agents if a.seated)
-        spawned = sum(1 for a in self.sim.agents if a.spawned)
-        stowing = sum(1 for a in self.sim.agents if a.luggage_status == "stowing")
-        total = len(self.sim.agents)
-        queue_len = sum(len(q) for q in self.sim.spawn_queues.values())
-
-        # Title bar
-        self.font_big.render_to(self.screen, (20, 20), WINDOW_TITLE, ACCENT)
+        seated = sum(1 for a in sim.agents if a.seated)
+        spawned = sum(1 for a in sim.agents if a.spawned)
+        stowing = sum(1 for a in sim.agents if a.luggage_status == "stowing")
+        total = len(sim.agents)
+        
+        # Section Title
+        self.font_big.render_to(self.screen, (20, 20 + offset_y), title, ACCENT)
 
         # Stats row
-        y = 55
+        y = 55 + offset_y
         stats = [
-            f"Tick: {self.sim.tick}",
+            f"Tick: {sim.tick}",
             f"Spawned: {spawned}/{total}",
             f"Seated: {seated}/{total}",
             f"Stowing: {stowing}",
-            f"Head-on: {sum(1 for a in self.sim.agents if a.intent == 'resolveHeadOn')}",
-            f"Shuffles: {sum(1 for a in self.sim.agents if a.intent == 'resolveSeatBlock')}",
-            f"Speed: {1000 // self.tick_delay:.0f} tps" if self.tick_delay > 0 else "Speed: MAX",
+            f"Head-on: {sum(1 for a in sim.agents if a.intent == 'resolveHeadOn')}",
+            f"Shuffles: {sum(1 for a in sim.agents if a.intent == 'resolveSeatBlock')}"
         ]
         x = 20
         for s in stats:
@@ -289,7 +296,7 @@ class BoardingVisualiser:
             x += 160
 
         # Progress bar
-        bar_x, bar_y, bar_w, bar_h = 20, 82, self.win_w - 40, 12
+        bar_x, bar_y, bar_w, bar_h = 20, 82 + offset_y, self.win_w - 40, 12
         progress = seated / total if total > 0 else 0
         pygame.draw.rect(self.screen, GRID_COLOR, (bar_x, bar_y, bar_w, bar_h), border_radius=6)
         fill_w = int(bar_w * progress)
@@ -308,16 +315,15 @@ class BoardingVisualiser:
         )
 
         # Status
-        if self.done:
+        is_done = all(a.seated for a in sim.agents)
+        if is_done:
             self.font_med.render_to(
-                self.screen, (20, self.win_h - 70),
-                f"✓ BOARDING COMPLETE in {self.sim.tick} ticks", ACCENT2
-            )
-        elif self.paused:
-            self.font_med.render_to(
-                self.screen, (20, self.win_h - 70), "▐▐  PAUSED", ACCENT
+                self.screen, (20, 110 + offset_y),
+                f"✓ COMPLETED in {sim.tick} ticks", ACCENT2
             )
 
+    def _draw_global_hud(self) -> None:
+        """Global HUD like legend and controls, placed at bottom."""
         # Legend
         legend_y = self.win_h - 40
         x = 20
@@ -333,7 +339,14 @@ class BoardingVisualiser:
         self.font_sm.render_to(self.screen, (x + 20, legend_y), "Stowing", TEXT_DIM)
         x += 100
 
-        # Controls
+        # Controls & Speed
+        if self.paused:
+            self.font_med.render_to(
+                self.screen, (20, self.win_h - 70), "▐▐  PAUSED", ACCENT
+            )
+        speed_txt = f"Speed: {1000 // self.tick_delay:.0f} tps" if self.tick_delay > 0 else "Speed: MAX"
+        self.font_med.render_to(self.screen, (120, self.win_h - 70), speed_txt, TEXT_COLOR)
+
         controls = "SPACE: pause  |  ↑↓: speed  |  R: restart  |  Q: quit"
         self.font_sm.render_to(
             self.screen, (self.win_w - 420, self.win_h - 40), controls, TEXT_DIM
@@ -352,15 +365,27 @@ class BoardingVisualiser:
                 and not self.done
                 and now - self.last_tick_time >= self.tick_delay
             ):
-                self.done = self.sim.step()
+                done1 = self.sim_std.step() if self.sim_std and not all(a.seated for a in self.sim_std.agents) else True
+                done2 = self.sim_pyramid.step() if self.sim_pyramid and not all(a.seated for a in self.sim_pyramid.agents) else True
+                self.done = done1 and done2
                 self.last_tick_time = now
 
             # Render
             self.screen.fill(BG_COLOR)
-            self._draw_edges()
-            self._draw_nodes()
-            self._draw_passengers()
-            self._draw_hud()
+            
+            # Draw Strategy 1 (Top)
+            self._draw_edges(offset_y=0)
+            self._draw_nodes(offset_y=0)
+            self._draw_passengers(self.sim_std, offset_y=0)
+            self._draw_hud_for_sim(self.sim_std, offset_y=0, title="Strategy 1: Back-to-front Zonal")
+
+            # Draw Strategy 2 (Bottom)
+            self._draw_edges(offset_y=self.y_offset)
+            self._draw_nodes(offset_y=self.y_offset)
+            self._draw_passengers(self.sim_pyramid, offset_y=self.y_offset)
+            self._draw_hud_for_sim(self.sim_pyramid, offset_y=self.y_offset, title="Strategy 2: Modified Reverse Pyramid")
+            
+            self._draw_global_hud()
 
             pygame.display.flip()
             self.clock.tick(120)  # cap at 120 fps

@@ -33,7 +33,9 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent / "Graph_and_manifest"
 NODES_FILE = BASE_DIR / "nodes_787.xlsx"
 EDGES_FILE = BASE_DIR / "edges_787.xlsx"
-MANIFEST_FILE = BASE_DIR / "generated_manifest.xlsx"
+MANIFEST_FILE = BASE_DIR / "generated_manifest_1.xlsx"
+
+VISUALIZE_ONE = False  # Set False to batch-run all sequentially
 
 SEED = 42
 MAX_TICKS = 10_000          # safety cap
@@ -180,6 +182,7 @@ class PassengerAgent:
             "unstowed" if has_luggage else "none"
         )
         self.remaining_stow_time: int = 0
+        self.seat_shuffle_delay: int = 0            # Timer for penalty
         self.time_since_move: int = 0               # believes(p, timeSinceMove) [IC4]
 
         # Per-tick beliefs (reset each tick during evaluate_intent)
@@ -430,6 +433,7 @@ class PassengerAgent:
         occupied: Set[str],
         all_agents: Dict[str, "PassengerAgent"],
         agent_at: Dict[str, "PassengerAgent"],
+        all_agent_at: Dict[str, "PassengerAgent"],
     ) -> None:
         """Evaluate observations → beliefs → intention."""
         if not self.spawned or self.position is None:
@@ -594,11 +598,11 @@ class PassengerAgent:
         # =================================================================
         if self._at_seat_row_aisle(env) and self._ready_to_enter():
             on_path = self._on_path_nodes(env)
-            blockers = [n for n in on_path if n in agent_at]
+            blockers = [n for n in on_path if n in all_agent_at]
             # Also check if the target seat itself is occupied by someone else
             seat_occupied = (
-                self.assigned_seat_node in agent_at
-                and agent_at[self.assigned_seat_node].pax_id != self.pax_id
+                self.assigned_seat_node in all_agent_at
+                and all_agent_at[self.assigned_seat_node].pax_id != self.pax_id
             )
             if blockers or seat_occupied:
                 self.row_blocked = True
@@ -775,73 +779,30 @@ class PassengerAgent:
         # ---- A7-A10/A15: seat-block resolution ----
         if self.intent == "resolveSeatBlock":
             if self.row_blocker:
-                # A7: shift outward toward aisle-access
-                req_ap = None
-                for other in agent_at.values():
-                    if other.pax_id == self.pax_id:
-                        continue
-                    if not other._at_seat_row_aisle(env):
-                        continue
-                    if not other._ready_to_enter():
-                        continue
-                    if cur in other._on_path_nodes(env) or cur == other.assigned_seat_node:
-                        req_ap = other._aisle_access_node(env)
-                        break
-
-                if req_ap is not None:
-                    yap = env.node_y(req_ap)
-                    # A7: shift to adjacent seat closer to aisle
-                    for n in env.neighbors(cur):
-                        if n in occupied or n in next_positions.values():
-                            continue
-                        if (env.node_type(n) == "seat"
-                                and env.node_x(n) == env.node_x(cur)):
-                            if abs(env.node_y(n) - yap) < abs(env.node_y(cur) - yap):
-                                next_positions[self.pax_id] = n
-                                self.position = n
-                                self.time_since_move = 0
-                                self.seated = False
-                                return f"shiftOut:{n}"
-                    # A8: outermost blocker → step into aisle
-                    if req_ap in env.neighbors(cur):
-                        if req_ap not in occupied and req_ap not in next_positions.values():
-                            next_positions[self.pax_id] = req_ap
-                            self.position = req_ap
-                            self.time_since_move = 0
-                            self.seated = False
-                            return f"shiftToAisle:{req_ap}"
-
+                # The agent natively occupying the physical seat just sits and waits.
+                # The burden of the delay is carried mathematically by the incoming passenger.
                 next_positions[self.pax_id] = cur
                 self.time_since_move += 1
-                return "wait"
+                return "waitBlocker"
 
             elif self.row_blocked:
-                if self.row_shift_complete:
-                    # A9/A10: squeeze with aisle-side occupant
-                    aisle_side = self._aisle_side_seat(env)
-                    if aisle_side is not None and aisle_side in agent_at:
-                        q = agent_at[aisle_side]
-                        if not q.seated:  # Never swap with a seated agent
-                            old_p, old_q = cur, q.position
-                            self.position = old_q
-                            q.position = old_p
-                            q.seated = False  # Safety: ensure not marked seated
-                            next_positions[self.pax_id] = old_q
-                            next_positions[q.pax_id] = old_p
-                            self.time_since_move = 0
-                            q.time_since_move = 0
-                            return f"squeezeWith:{q.pax_id}"
-                    elif aisle_side is not None and aisle_side not in occupied:
-                        if aisle_side not in next_positions.values():
-                            next_positions[self.pax_id] = aisle_side
-                            self.position = aisle_side
-                            self.time_since_move = 0
-                            return f"moveTo:{aisle_side}"
-
-                # A15: wait for shift
-                next_positions[self.pax_id] = cur
-                self.time_since_move += 1
-                return "wait"
+                # Time Penalty Execution
+                if self.seat_shuffle_delay == 0:
+                    self.seat_shuffle_delay = rng.randint(37, 75)  # 30s to 60s conversion (tick = 0.8s)
+                    next_positions[self.pax_id] = cur
+                    return "startShuffle"
+                
+                self.seat_shuffle_delay -= 1
+                if self.seat_shuffle_delay <= 0:
+                    # Delay is complete. "Teleport" the passenger into the seat node.
+                    target = self.assigned_seat_node
+                    next_positions[self.pax_id] = target
+                    self.position = target
+                    self.time_since_move = 0
+                    return "finishShuffle"
+                else:
+                    next_positions[self.pax_id] = cur
+                    return "shufflingSeat"
 
             next_positions[self.pax_id] = cur
             self.time_since_move += 1
@@ -903,14 +864,21 @@ class BoardingSimulation:
                 continue
 
             has_lug = bool(row.get("has_luggage", False))
-            raw_stow = int(row.get("stow_duration", 0)) if has_lug else 0
-            stow_dur = max(1, raw_stow // 10) if has_lug else 0
+            raw_stow_seconds = float(row.get("stow_duration", 0)) if has_lug else 0
+            stow_dur = max(1, int(raw_stow_seconds / 0.8)) if has_lug else 0
+
+            door_val = row.get("preferred_door")
+            if pd.isna(door_val) or str(door_val).strip().upper() not in ["F", "M"]:
+                pax_class = str(row.get("class", "economy")).lower()
+                door_str = "F" if pax_class == "business" else "M"
+            else:
+                door_str = str(door_val).strip().upper()
 
             agent = PassengerAgent(
                 pax_id=str(row["pax_id"]),
                 assigned_seat_node=seat_node,
-                assigned_spawn="M",  # 100% Door M logic
-                alternative_spawn="M",
+                assigned_spawn=door_str,
+                alternative_spawn=door_str,
 
                 assigned_aisle=str(row["assigned_aisle"]),
                 seat_x=int(row["x_coord"]),
@@ -919,7 +887,7 @@ class BoardingSimulation:
                 preferred_speed=int(row.get("preferred_speed", 1)),
                 lateral_speed=int(row.get("lateral_speed", 1)),
                 patience_threshold=int(row.get("patience_threshold", 15)),
-                compliance_level=0.8,
+                compliance_level=0.95,
                 has_luggage=has_lug,
                 stow_duration=stow_dur,
                 zone_std=int(row.get("zone_std", 1)),
@@ -942,11 +910,9 @@ class BoardingSimulation:
             if door not in self.spawn_queues:
                 self.spawn_queues[door] = deque()
             self.spawn_queues[door].append(agent)
-        # Shuffle within each door queue for randomness
-        for door in self.spawn_queues:
-            q = list(self.spawn_queues[door])
-            self.rng.shuffle(q)
-            self.spawn_queues[door] = deque(q)
+        # Do not shuffle here! The dataframe was already sorted by zone
+        # and shuffled within zones during policy application.
+        # This preserves the exact group release sequence.
 
         print(f"Simulation created with {len(self.agents)} passengers")
         for door, q in self.spawn_queues.items():
@@ -995,9 +961,12 @@ class BoardingSimulation:
 
         # Build lookups
         agent_at: Dict[str, PassengerAgent] = {}
+        all_agent_at: Dict[str, PassengerAgent] = {}
         for a in self.agents:
-            if a.spawned and not a.seated and a.position is not None:
-                agent_at[a.position] = a
+            if a.spawned and a.position is not None:
+                all_agent_at[a.position] = a
+                if not a.seated:
+                    agent_at[a.position] = a
         occupied = set(agent_at.keys())
 
         # Phase A: evaluate intentions
@@ -1005,7 +974,7 @@ class BoardingSimulation:
         self.rng.shuffle(active)
         for agent in active:
             agent.evaluate_intent(
-                self.env, occupied, self.agents_by_id, agent_at
+                self.env, occupied, self.agents_by_id, agent_at, all_agent_at
             )
 
         # Phase B: execute actions
@@ -1025,7 +994,7 @@ class BoardingSimulation:
 
     def run(self) -> int:
         print(f"\n{'='*60}")
-        print(f"  BOARDING SIMULATION START  (Strategy 1: Random / M door)")
+        print(f"  BOARDING SIMULATION START  (Strategy: {self.boarding_policy.upper()})")
         print(f"{'='*60}\n")
 
         while self.tick < MAX_TICKS:
@@ -1058,15 +1027,20 @@ class BoardingSimulation:
             / max(pax_lug, 1)
         )
 
+        total_sec = total * 0.8
+        avg_boarding_sec = avg_boarding * 0.8
+        avg_wait_sec = avg_wait * 0.8
+        avg_stow_sec = avg_stow * 0.8
+
         print(f"\n{'='*60}")
         print(f"  RESULTS")
         print(f"{'='*60}")
-        print(f"  Total boarding time : {total} ticks")
+        print(f"  Total boarding time : {total} ticks ({total_sec:.1f} s / {total_sec/60:.1f} m)")
         print(f"  Passengers seated   : {seated_count} / {len(self.agents)}")
-        print(f"  Passengers w/ luggage: {pax_lug} / {len(self.agents)}")
-        print(f"  Avg boarding time   : {avg_boarding:.1f} ticks/passenger")
-        print(f"  Avg wait time       : {avg_wait:.1f} ticks/passenger")
-        print(f"  Avg stow duration   : {avg_stow:.1f} ticks (luggage pax only)")
+        print(f"  Passengers w/ lug.  : {pax_lug} / {len(self.agents)}")
+        print(f"  Avg boarding time   : {avg_boarding:.1f} ticks ({avg_boarding_sec:.1f} s) per pax")
+        print(f"  Avg wait time       : {avg_wait:.1f} ticks ({avg_wait_sec:.1f} s) per pax")
+        print(f"  Avg stow duration   : {avg_stow:.1f} ticks ({avg_stow_sec:.1f} s) (luggage pax)")
         print(f"{'='*60}\n")
 
         assert seated_count == len(self.agents), (
@@ -1097,8 +1071,59 @@ def _sign(x: int) -> int:
 # ---------------------------------------------------------------------------
 def main() -> None:
     env = CabinEnvironment(NODES_FILE, EDGES_FILE)
-    sim = BoardingSimulation(env, MANIFEST_FILE, seed=SEED)
-    sim.run()
+    
+    if VISUALIZE_ONE:
+        print("\n[Mode] VISUALIZE_ONE active. Running single manifest...")
+        print("\nRunning Strategy 1: Back-to-front zonal")
+        sim1 = BoardingSimulation(env, MANIFEST_FILE, seed=SEED, boarding_policy="std")
+        total1 = sim1.run()
+        
+        print("\nRunning Strategy 2: Modified reverse pyramid")
+        sim2 = BoardingSimulation(env, MANIFEST_FILE, seed=SEED, boarding_policy="pyramid")
+        total2 = sim2.run()
+        
+        total1_sec = total1 * 0.8
+        total2_sec = total2 * 0.8
+        
+        print(f"\n{'='*60}")
+        print("  FINAL COMPARISON")
+        print(f"{'='*60}")
+        print(f"  Back-to-front (std)         : {total1} ticks ({total1_sec:.1f} s / {total1_sec/60:.1f} m)")
+        print(f"  Reverse Pyramid (pyramid)   : {total2} ticks ({total2_sec:.1f} s / {total2_sec/60:.1f} m)")
+        print(f"{'='*60}\n")
+    else:
+        import csv
+        print("\n[Mode] BATCH active. Finding all manifests...")
+        results = []
+        i = 1
+        while True:
+            target_manifest = BASE_DIR / f"generated_manifest_{i}.xlsx"
+            if not target_manifest.exists():
+                break
+            
+            print(f"\n--- Batch: Evaluating Manifest {i} ---")
+            sim1 = BoardingSimulation(env, target_manifest, seed=SEED, boarding_policy="std")
+            total1 = sim1.run()
+            
+            sim2 = BoardingSimulation(env, target_manifest, seed=SEED, boarding_policy="pyramid")
+            total2 = sim2.run()
+            
+            results.append({
+                "manifest_id": i,
+                "std_ticks": total1,
+                "std_seconds": total1 * 0.8,
+                "pyramid_ticks": total2,
+                "pyramid_seconds": total2 * 0.8
+            })
+            i += 1
+            
+        csv_out = BASE_DIR / "simulation_batch_results.csv"
+        with open(csv_out, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["manifest_id", "std_ticks", "std_seconds", "pyramid_ticks", "pyramid_seconds"])
+            writer.writeheader()
+            writer.writerows(results)
+            
+        print(f"\nBatch Complete! Executed {len(results)} distinct scenarios. Data exported linearly to {csv_out}")
 
 
 if __name__ == "__main__":
