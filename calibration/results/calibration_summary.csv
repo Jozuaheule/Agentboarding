@@ -1,0 +1,10 @@
+parameter_set_id,mean_total_seconds,std_total_seconds,median_total_seconds,min_total_seconds,max_total_seconds,mean_avg_wait_seconds,mean_row_conflict_count,mean_row_conflict_ticks,completion_rate,stow_dist,stow_shape_k,stow_scale_lambda_s,shuffle_model,shuffle_low_s,shuffle_mode_s,shuffle_high_s,screen_completion,screen_time,screen_stability,screen_row_conflict,stage1_pass
+P01_wb_k1.7_l14_tri_15_20.0_26,775.8666666666667,60.8332845221029,783.25,641.0,895.0,84.3604091456077,68.7,2851.8,1.0,weibull,1.7,14.0,triangular,15.0,20.0,26.0,True,True,True,True,True
+P02_wb_k1.7_l14_tri_15_20.5_26,778.4,60.828532325115205,782.75,646.5,896.5,84.64386281588448,68.7,2867.733333333333,1.0,weibull,1.7,14.0,triangular,15.0,20.5,26.0,True,True,True,True,True
+P03_wb_k1.7_l14_tri_15_21.0_26,782.1833333333333,58.22007642429352,790.75,648.5,905.0,85.48808664259927,68.7,2899.6,1.0,weibull,1.7,14.0,triangular,15.0,21.0,26.0,True,True,True,True,True
+P04_wb_k1.7_l16_tri_15_20.0_26,827.1833333333333,67.98636822457732,836.25,691.0,971.0,93.17286401925391,68.7,2844.5666666666666,1.0,weibull,1.7,16.0,triangular,15.0,20.0,26.0,True,True,True,True,True
+P05_wb_k1.7_l16_tri_15_20.5_26,831.0666666666667,65.39280954531536,838.5,677.0,954.5,93.52003610108302,68.7,2870.2,1.0,weibull,1.7,16.0,triangular,15.0,20.5,26.0,True,True,True,True,True
+P06_wb_k1.7_l16_tri_15_21.0_26,833.35,66.4635173454658,839.25,684.0,974.0,94.0214199759326,68.7,2898.133333333333,1.0,weibull,1.7,16.0,triangular,15.0,21.0,26.0,True,True,True,True,True
+P07_wb_k1.7_l18_tri_15_20.0_26,883.6166666666667,73.01271539393261,896.25,725.5,1018.5,102.24705174488568,68.7,2849.766666666667,1.0,weibull,1.7,18.0,triangular,15.0,20.0,26.0,True,True,True,True,True
+P08_wb_k1.7_l18_tri_15_20.5_26,887.0,73.21461131731034,901.25,730.5,1039.0,102.6933814681107,68.7,2876.366666666667,1.0,weibull,1.7,18.0,triangular,15.0,20.5,26.0,True,True,True,True,True
+P09_wb_k1.7_l18_tri_15_21.0_26,885.8,72.17144339265573,895.75,719.0,1033.5,102.52912154031287,68.7,2896.366666666667,1.0,weibull,1.7,18.0,triangular,15.0,21.0,26.0,True,True,True,True,True

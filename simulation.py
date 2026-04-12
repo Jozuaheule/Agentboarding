@@ -10,11 +10,6 @@ Implemented formal properties:
   I1-I5    Intention selection
   A1-A17   Action generation
   C1       System-level completion condition
-
-Navigation uses Dijkstra shortest-path distance as the executable implementation
-of the formal coordinate-based observations (O4: rowCloserIfMoveTo, O5:
-columnCloserIfMoveTo).  Non-regression routing (d(n) ≤ d(m)) is used to
-handle graph-topology plateaus at cross-aisle connectors.
 """
 
 from __future__ import annotations
@@ -27,15 +22,51 @@ from typing import Dict, List, Optional, Set, Tuple
 import networkx as nx
 import pandas as pd
 
+from calibration.calibration_config import (
+    SHUFFLE_HIGH_S,
+    SHUFFLE_LOW_S,
+    SHUFFLE_MODE_S,
+    SHUFFLE_MODEL,
+    ShuffleConfig,
+    seconds_to_ticks,
+    validate_triangular_mode,
+    ticks_to_seconds,
+    validate_bounds,
+)
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent / "Graph_and_manifest"
-NODES_FILE = BASE_DIR / "nodes_787.xlsx"
-EDGES_FILE = BASE_DIR / "edges_787.xlsx"
-MANIFEST_FILE = BASE_DIR / "generated_manifest_1.xlsx"
+PROJECT_ROOT = Path(__file__).resolve().parent
+DATA_DIR = PROJECT_ROOT / "manifest_generation"
+GRAPH_DIR = DATA_DIR / "graph"
 
-VISUALIZE_ONE = False  # Set False to batch-run all sequentially
+
+def _resolve_existing_path(*candidates: Path) -> Path:
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    tried = "\n - ".join(str(c) for c in candidates)
+    raise FileNotFoundError(f"Could not resolve required input file. Tried:\n - {tried}")
+
+
+NODES_FILE = _resolve_existing_path(
+    GRAPH_DIR / "nodes_787.xlsx",
+    DATA_DIR / "nodes_787.xlsx",
+    PROJECT_ROOT / "Graph_and_manifest" / "nodes_787.xlsx",
+)
+EDGES_FILE = _resolve_existing_path(
+    GRAPH_DIR / "edges_787.xlsx",
+    DATA_DIR / "edges_787.xlsx",
+    PROJECT_ROOT / "Graph_and_manifest" / "edges_787.xlsx",
+)
+MANIFEST_FILE = _resolve_existing_path(
+    DATA_DIR / "generated_manifest_1.xlsx",
+    PROJECT_ROOT / "generated_manifest_1.xlsx",
+    PROJECT_ROOT / "Graph_and_manifest" / "generated_manifest_1.xlsx",
+)
+
+VISUALIZE_ONE = True  # Set False to batch-run all sequentially
 
 SEED = 42
 MAX_TICKS = 10_000          # safety cap
@@ -49,6 +80,12 @@ K_OBS = 5                   # perception range in hops  (Nk neighbourhood)
 # ---------------------------------------------------------------------------
 class CabinEnvironment:
     """Static aircraft cabin graph: nodes (seats, aisle), edges."""
+
+    DOOR_TARGETS = {
+        "F": (0, 0),
+        "M": (15, 0),
+        "R": (79, 1),
+    }
 
     def __init__(self, nodes_file: Path, edges_file: Path) -> None:
         df_nodes = pd.read_excel(nodes_file)
@@ -72,9 +109,8 @@ class CabinEnvironment:
                 self.aisle_nodes[nid] = data
 
         self.doors: Dict[str, str] = {}
-        self._find_door("F", target_x=0, target_y=3)
-        self._find_door("M", target_x=26, target_y=3)  # Centered perfectly on cross-galley
-        self._find_door("R", target_x=125, target_y=3)
+        for label, (target_x, target_y) in self.DOOR_TARGETS.items():
+            self._find_door(label, target_x=target_x, target_y=target_y)
 
         # x_mid – longitudinal midpoint of the cabin (Property B8)
         all_x = [d["x"] for d in self.graph.nodes.values()]
@@ -87,16 +123,21 @@ class CabinEnvironment:
               f"{self.graph.number_of_edges()} edges")
         print(f"  Seats: {len(self.seat_nodes)}, Aisle: {len(self.aisle_nodes)}")
         print(f"  Doors: {self.doors}  |  x_mid={self.x_mid}")
+        # Debug: show door coordinates
+        for label, door_id in self.doors.items():
+            x, y = self.graph.nodes[door_id]["x"], self.graph.nodes[door_id]["y"]
+            print(f"    Door {label}: node_id={door_id}, x={x}, y={y}")
 
     def _find_door(self, label: str, target_x: int, target_y: int) -> None:
-        best_id, best_d = None, float("inf")
+        # Use the exact requested coordinate if present.
         for nid, data in self.aisle_nodes.items():
-            d = abs(data["x"] - target_x) + abs(data["y"] - target_y)
-            if d < best_d:
-                best_d = d
-                best_id = nid
-        if best_id is not None:
-            self.doors[label] = best_id
+            if data["x"] == target_x and data["y"] == target_y:
+                self.doors[label] = nid
+                return
+
+        raise ValueError(
+            f"Door {label} target coordinate ({target_x}, {target_y}) not present in aisle nodes."
+        )
 
     def seat_node_at(self, x: int, y: int) -> Optional[str]:
         for nid, data in self.seat_nodes.items():
@@ -152,6 +193,14 @@ class PassengerAgent:
         compliance_level: float = 0.8,
         has_luggage: bool = False,
         stow_duration: int = 0,
+        shuffle_model: str = SHUFFLE_MODEL,
+        shuffle_low_ticks: int = seconds_to_ticks(SHUFFLE_LOW_S, min_ticks=1),
+        shuffle_high_ticks: int = seconds_to_ticks(SHUFFLE_HIGH_S, min_ticks=1),
+        shuffle_mode_ticks: Optional[int] = (
+            seconds_to_ticks(SHUFFLE_MODE_S, min_ticks=1)
+            if SHUFFLE_MODE_S is not None
+            else None
+        ),
         zone_std: int = 1,
         zone_outsidein: int = 1,
         zone_pyramid: int = 1,
@@ -171,6 +220,14 @@ class PassengerAgent:
         self.compliance_level = compliance_level    # complianceLevelp
         self.has_luggage = has_luggage              # hasLuggagep
         self.stow_duration = stow_duration          # stowDurationp
+        self.shuffle_model = shuffle_model
+        self.shuffle_low_ticks = max(1, int(shuffle_low_ticks))
+        self.shuffle_high_ticks = max(self.shuffle_low_ticks, int(shuffle_high_ticks))
+        self.shuffle_mode_ticks = (
+            None
+            if shuffle_mode_ticks is None
+            else min(self.shuffle_high_ticks, max(self.shuffle_low_ticks, int(shuffle_mode_ticks)))
+        )
         self.zone_std = zone_std                    # zoneSTDp
         self.zone_outsidein = zone_outsidein        # zoneOutsideInp
         self.zone_pyramid = zone_pyramid            # zonePyramidp
@@ -788,7 +845,29 @@ class PassengerAgent:
             elif self.row_blocked:
                 # Time Penalty Execution
                 if self.seat_shuffle_delay == 0:
-                    self.seat_shuffle_delay = rng.randint(37, 75)  # 30s to 60s conversion (tick = 0.8s)
+                    if self.shuffle_model == "uniform":
+                        self.seat_shuffle_delay = rng.randint(
+                            self.shuffle_low_ticks,
+                            self.shuffle_high_ticks,
+                        )
+                    elif self.shuffle_model == "triangular":
+                        mode = (
+                            self.shuffle_mode_ticks
+                            if self.shuffle_mode_ticks is not None
+                            else (self.shuffle_low_ticks + self.shuffle_high_ticks) / 2
+                        )
+                        sampled = rng.triangular(
+                            self.shuffle_low_ticks,
+                            self.shuffle_high_ticks,
+                            mode,
+                        )
+                        sampled_ticks = int(round(sampled))
+                        self.seat_shuffle_delay = min(
+                            self.shuffle_high_ticks,
+                            max(self.shuffle_low_ticks, sampled_ticks),
+                        )
+                    else:
+                        raise ValueError(f"Unsupported shuffle model: {self.shuffle_model}")
                     next_positions[self.pax_id] = cur
                     return "startShuffle"
                 
@@ -833,12 +912,34 @@ class BoardingSimulation:
         manifest_file: Path,
         seed: int = SEED,
         boarding_policy: str = "random",
+        shuffle_config: Optional[ShuffleConfig] = None,
     ) -> None:
         self.env = env
         self.rng = random.Random(seed)
         self.tick = 0
         self.occupied: Set[str] = set()
         self.boarding_policy = boarding_policy
+        self.shuffle_config = self._normalize_shuffle_config(shuffle_config)
+        self.shuffle_low_ticks = seconds_to_ticks(self.shuffle_config.low_s, min_ticks=1)
+        self.shuffle_high_ticks = seconds_to_ticks(self.shuffle_config.high_s, min_ticks=1)
+        self.shuffle_mode_ticks = (
+            None
+            if self.shuffle_config.mode_s is None
+            else seconds_to_ticks(self.shuffle_config.mode_s, min_ticks=1)
+        )
+        self.event_counters: Dict[str, int] = {
+            "spawned": 0,
+            "moves": 0,
+            "waits": 0,
+            "seated": 0,
+            "head_on_events": 0,
+            "row_conflict_events": 0,
+            "stow_start": 0,
+            "stow_complete": 0,
+            "seat_shuffle_start": 0,
+            "seat_shuffle_finish": 0,
+            "yield_actions": 0,
+        }
 
         df = pd.read_excel(manifest_file)
         
@@ -865,7 +966,7 @@ class BoardingSimulation:
 
             has_lug = bool(row.get("has_luggage", False))
             raw_stow_seconds = float(row.get("stow_duration", 0)) if has_lug else 0
-            stow_dur = max(1, int(raw_stow_seconds / 0.8)) if has_lug else 0
+            stow_dur = seconds_to_ticks(raw_stow_seconds, min_ticks=1) if has_lug else 0
 
             door_val = row.get("preferred_door")
             if pd.isna(door_val) or str(door_val).strip().upper() not in ["F", "M"]:
@@ -890,6 +991,10 @@ class BoardingSimulation:
                 compliance_level=0.95,
                 has_luggage=has_lug,
                 stow_duration=stow_dur,
+                shuffle_model=self.shuffle_config.model,
+                shuffle_low_ticks=self.shuffle_low_ticks,
+                shuffle_high_ticks=self.shuffle_high_ticks,
+                shuffle_mode_ticks=self.shuffle_mode_ticks,
                 zone_std=int(row.get("zone_std", 1)),
                 zone_outsidein=int(row.get("zone_outsidein", 1)),
                 zone_pyramid=int(row.get("zone_pyramid", 1)),
@@ -917,6 +1022,28 @@ class BoardingSimulation:
         print(f"Simulation created with {len(self.agents)} passengers")
         for door, q in self.spawn_queues.items():
             print(f"  Door {door}: {len(q)} passengers")
+
+    @staticmethod
+    def _normalize_shuffle_config(config: Optional[ShuffleConfig]) -> ShuffleConfig:
+        if config is None:
+            low_s, high_s = validate_bounds(SHUFFLE_LOW_S, SHUFFLE_HIGH_S, "shuffle")
+            mode_s = (
+                validate_triangular_mode(low_s, SHUFFLE_MODE_S, high_s, "shuffle triangular")
+                if SHUFFLE_MODEL == "triangular" and SHUFFLE_MODE_S is not None
+                else None
+            )
+            return ShuffleConfig(model=SHUFFLE_MODEL, low_s=low_s, high_s=high_s, mode_s=mode_s)
+
+        model = config.model.strip().lower()
+        if model not in {"uniform", "triangular"}:
+            raise ValueError(f"Unsupported shuffle model: {config.model}")
+        low_s, high_s = validate_bounds(config.low_s, config.high_s, "shuffle")
+        mode_s = None
+        if model == "triangular":
+            if config.mode_s is None:
+                raise ValueError("Triangular shuffle model requires mode_s")
+            mode_s = validate_triangular_mode(low_s, config.mode_s, high_s, "shuffle triangular")
+        return ShuffleConfig(model=model, low_s=low_s, high_s=high_s, mode_s=mode_s)
 
     def _spawn_next(self) -> None:
         """Spawn up to SPAWN_RATE passengers per door per tick.
@@ -953,6 +1080,26 @@ class BoardingSimulation:
                 agent.spawned = True
                 self.occupied.add(door_node)
                 spawned_this_tick += 1
+                self.event_counters["spawned"] += 1
+
+    def _record_action_metrics(self, action: str, agent: PassengerAgent) -> None:
+        if action.startswith("moveTo:"):
+            self.event_counters["moves"] += 1
+        elif action in {"wait", "waitBlocker", "shufflingSeat"}:
+            self.event_counters["waits"] += 1
+            agent.wait_count += 1
+        elif action == "sit":
+            self.event_counters["seated"] += 1
+        elif action == "startStow":
+            self.event_counters["stow_start"] += 1
+        elif action == "stowComplete":
+            self.event_counters["stow_complete"] += 1
+        elif action == "startShuffle":
+            self.event_counters["seat_shuffle_start"] += 1
+        elif action == "finishShuffle":
+            self.event_counters["seat_shuffle_finish"] += 1
+        elif action.startswith("yield:"):
+            self.event_counters["yield_actions"] += 1
 
     def step(self) -> bool:
         """One tick: Observe/Intent → Action/Commit."""
@@ -976,15 +1123,21 @@ class BoardingSimulation:
             agent.evaluate_intent(
                 self.env, occupied, self.agents_by_id, agent_at, all_agent_at
             )
+            if agent.intent == "resolveHeadOn":
+                self.event_counters["head_on_events"] += 1
+            if agent.intent == "resolveSeatBlock":
+                self.event_counters["row_conflict_events"] += 1
 
         # Phase B: execute actions
         next_positions: Dict[str, str] = {}
         for agent in active:
             agent.boarding_time += 1
-            agent.execute_action(
+            action = agent.execute_action(
                 self.env, occupied, agent_at,
                 self.agents_by_id, next_positions, self.rng,
             )
+            agent.last_action = action
+            self._record_action_metrics(action, agent)
 
         # Sync occupied set
         self.occupied = set(next_positions.values())
@@ -992,26 +1145,7 @@ class BoardingSimulation:
         # C1: completion
         return all(a.seated for a in self.agents)
 
-    def run(self) -> int:
-        print(f"\n{'='*60}")
-        print(f"  BOARDING SIMULATION START  (Strategy: {self.boarding_policy.upper()})")
-        print(f"{'='*60}\n")
-
-        while self.tick < MAX_TICKS:
-            done = self.step()
-            if self.tick % REPORT_EVERY == 0 or done:
-                seated = sum(1 for a in self.agents if a.seated)
-                spawned = sum(1 for a in self.agents if a.spawned)
-                print(
-                    f"  t={self.tick:>5d}  |  "
-                    f"spawned={spawned:>3d}/{len(self.agents)}  |  "
-                    f"seated={seated:>3d}/{len(self.agents)}  |  "
-                    f"queue={sum(len(q) for q in self.spawn_queues.values())}"
-                )
-            if done:
-                break
-
-        total = self.tick
+    def _compute_metrics(self, total_ticks: int) -> Dict[str, float]:
         seated_count = sum(1 for a in self.agents if a.seated)
         avg_boarding = (
             sum(a.boarding_time for a in self.agents if a.seated)
@@ -1026,33 +1160,102 @@ class BoardingSimulation:
             sum(a.stow_duration for a in self.agents if a.has_luggage)
             / max(pax_lug, 1)
         )
+        completion_success = seated_count == len(self.agents)
 
-        total_sec = total * 0.8
-        avg_boarding_sec = avg_boarding * 0.8
-        avg_wait_sec = avg_wait * 0.8
-        avg_stow_sec = avg_stow * 0.8
+        return {
+            "total_ticks": float(total_ticks),
+            "total_seconds": ticks_to_seconds(total_ticks),
+            "seated_count": float(seated_count),
+            "total_passengers": float(len(self.agents)),
+            "completion_success": float(1 if completion_success else 0),
+            "avg_boarding_ticks": float(avg_boarding),
+            "avg_boarding_seconds": ticks_to_seconds(avg_boarding),
+            "avg_wait_ticks": float(avg_wait),
+            "avg_wait_seconds": ticks_to_seconds(avg_wait),
+            "luggage_passengers": float(pax_lug),
+            "avg_stow_ticks": float(avg_stow),
+            "avg_stow_seconds": ticks_to_seconds(avg_stow),
+            "head_on_count": float(self.event_counters["head_on_events"]),
+            "row_conflict_count": float(self.event_counters["row_conflict_events"]),
+            "seat_shuffle_starts": float(self.event_counters["seat_shuffle_start"]),
+            "seat_shuffle_finishes": float(self.event_counters["seat_shuffle_finish"]),
+        }
 
-        print(f"\n{'='*60}")
-        print(f"  RESULTS")
-        print(f"{'='*60}")
-        print(f"  Total boarding time : {total} ticks ({total_sec:.1f} s / {total_sec/60:.1f} m)")
-        print(f"  Passengers seated   : {seated_count} / {len(self.agents)}")
-        print(f"  Passengers w/ lug.  : {pax_lug} / {len(self.agents)}")
-        print(f"  Avg boarding time   : {avg_boarding:.1f} ticks ({avg_boarding_sec:.1f} s) per pax")
-        print(f"  Avg wait time       : {avg_wait:.1f} ticks ({avg_wait_sec:.1f} s) per pax")
-        print(f"  Avg stow duration   : {avg_stow:.1f} ticks ({avg_stow_sec:.1f} s) (luggage pax)")
-        print(f"{'='*60}\n")
+    def run(self, verbose: bool = True, enforce_completion: bool = True) -> int:
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"  BOARDING SIMULATION START  (Strategy: {self.boarding_policy.upper()})")
+            print(f"{'='*60}\n")
 
-        assert seated_count == len(self.agents), (
-            f"Not all passengers seated! {seated_count}/{len(self.agents)}"
-        )
-        for a in self.agents:
-            assert a.position == a.assigned_seat_node, (
-                f"Pax {a.pax_id} not at seat! "
-                f"pos={a.position}, seat={a.assigned_seat_node}"
+        while self.tick < MAX_TICKS:
+            done = self.step()
+            if verbose and (self.tick % REPORT_EVERY == 0 or done):
+                seated = sum(1 for a in self.agents if a.seated)
+                spawned = sum(1 for a in self.agents if a.spawned)
+                print(
+                    f"  t={self.tick:>5d}  |  "
+                    f"spawned={spawned:>3d}/{len(self.agents)}  |  "
+                    f"seated={seated:>3d}/{len(self.agents)}  |  "
+                    f"queue={sum(len(q) for q in self.spawn_queues.values())}"
+                )
+            if done:
+                break
+
+        total = self.tick
+        metrics = self._compute_metrics(total)
+
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"  RESULTS")
+            print(f"{'='*60}")
+            total_sec = metrics["total_seconds"]
+            print(
+                f"  Total boarding time : {total} ticks "
+                f"({total_sec:.1f} s / {total_sec/60:.1f} m)"
             )
-        print("  [OK] All sanity checks passed.\n")
+            print(
+                f"  Passengers seated   : {int(metrics['seated_count'])} / "
+                f"{int(metrics['total_passengers'])}"
+            )
+            print(
+                f"  Passengers w/ lug.  : {int(metrics['luggage_passengers'])} / "
+                f"{int(metrics['total_passengers'])}"
+            )
+            print(
+                f"  Avg boarding time   : {metrics['avg_boarding_ticks']:.1f} ticks "
+                f"({metrics['avg_boarding_seconds']:.1f} s) per pax"
+            )
+            print(
+                f"  Avg wait time       : {metrics['avg_wait_ticks']:.1f} ticks "
+                f"({metrics['avg_wait_seconds']:.1f} s) per pax"
+            )
+            print(
+                f"  Avg stow duration   : {metrics['avg_stow_ticks']:.1f} ticks "
+                f"({metrics['avg_stow_seconds']:.1f} s) (luggage pax)"
+            )
+            print(f"{'='*60}\n")
+
+        if enforce_completion:
+            seated_count = int(metrics["seated_count"])
+            assert seated_count == len(self.agents), (
+                f"Not all passengers seated! {seated_count}/{len(self.agents)}"
+            )
+            for a in self.agents:
+                assert a.position == a.assigned_seat_node, (
+                    f"Pax {a.pax_id} not at seat! "
+                    f"pos={a.position}, seat={a.assigned_seat_node}"
+                )
+            if verbose:
+                print("  [OK] All sanity checks passed.\n")
         return total
+
+    def run_with_metrics(
+        self,
+        verbose: bool = False,
+        enforce_completion: bool = False,
+    ) -> Dict[str, float]:
+        total = self.run(verbose=verbose, enforce_completion=enforce_completion)
+        return self._compute_metrics(total)
 
 
 # ---------------------------------------------------------------------------
@@ -1082,8 +1285,8 @@ def main() -> None:
         sim2 = BoardingSimulation(env, MANIFEST_FILE, seed=SEED, boarding_policy="pyramid")
         total2 = sim2.run()
         
-        total1_sec = total1 * 0.8
-        total2_sec = total2 * 0.8
+        total1_sec = ticks_to_seconds(total1)
+        total2_sec = ticks_to_seconds(total2)
         
         print(f"\n{'='*60}")
         print("  FINAL COMPARISON")
@@ -1097,7 +1300,9 @@ def main() -> None:
         results = []
         i = 1
         while True:
-            target_manifest = BASE_DIR / f"generated_manifest_{i}.xlsx"
+            target_manifest = DATA_DIR / f"generated_manifest_{i}.xlsx"
+            if not target_manifest.exists():
+                target_manifest = PROJECT_ROOT / f"generated_manifest_{i}.xlsx"
             if not target_manifest.exists():
                 break
             
@@ -1111,13 +1316,13 @@ def main() -> None:
             results.append({
                 "manifest_id": i,
                 "std_ticks": total1,
-                "std_seconds": total1 * 0.8,
+                "std_seconds": ticks_to_seconds(total1),
                 "pyramid_ticks": total2,
-                "pyramid_seconds": total2 * 0.8
+                "pyramid_seconds": ticks_to_seconds(total2)
             })
             i += 1
             
-        csv_out = BASE_DIR / "simulation_batch_results.csv"
+        csv_out = DATA_DIR / "simulation_batch_results.csv"
         with open(csv_out, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["manifest_id", "std_ticks", "std_seconds", "pyramid_ticks", "pyramid_seconds"])
             writer.writeheader()

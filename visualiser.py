@@ -79,6 +79,9 @@ PAX_DEFAULT = (200, 200, 200)
 DOOR_COLOR = (255, 80, 80)
 DOOR_RADIUS = 9
 
+# Render low-y graph nodes near the lower side of the panel.
+FLIP_Y_AXIS = True
+
 
 # ---------------------------------------------------------------------------
 # Visualiser
@@ -168,14 +171,20 @@ class BoardingVisualiser:
         self.node_pos: Dict[str, Tuple[int, int]] = {}
         for nid, data in self.env.graph.nodes(data=True):
             sx = MARGIN_LEFT + int((data["x"] - self.data_x_min) * self.scale)
-            sy = MARGIN_TOP + int((data["y"] - self.data_y_min) * self.scale)
+            if FLIP_Y_AXIS:
+                sy = MARGIN_TOP + int((self.data_y_max - data["y"]) * self.scale)
+            else:
+                sy = MARGIN_TOP + int((data["y"] - self.data_y_min) * self.scale)
             self.node_pos[nid] = (sx, sy)
 
     def _coord_to_screen(self, x: float, y: float) -> Tuple[int, int]:
         data_w = self.data_x_max - self.data_x_min or 1
         data_h = self.data_y_max - self.data_y_min or 1
         sx = MARGIN_LEFT + int((x - self.data_x_min) / data_w * self.draw_w)
-        sy = MARGIN_TOP + int((y - self.data_y_min) / data_h * self.draw_h)
+        if FLIP_Y_AXIS:
+            sy = MARGIN_TOP + int((self.data_y_max - y) / data_h * self.draw_h)
+        else:
+            sy = MARGIN_TOP + int((y - self.data_y_min) / data_h * self.draw_h)
         return sx, sy
 
     # --- Drawing ---
