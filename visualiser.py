@@ -5,8 +5,8 @@ Shows the full boarding process animated on the cabin graph.
 
 Controls:
   SPACE  - pause / resume
-  UP     - speed up  (fewer ms per tick)
-  DOWN   - slow down (more ms per tick)
+    RIGHT   - speed up  (fewer ms per tick)
+    LEFT  - slow down (more ms per tick)
   R      - restart simulation
   Q/ESC  - quit
 """
@@ -19,10 +19,10 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import pygame
 import pygame.freetype
+from calibration.calibration_config import ticks_to_seconds
 
 # Import simulation components from the existing module
 from simulation import (
-    BASE_DIR,
     EDGES_FILE,
     MANIFEST_FILE,
     NODES_FILE,
@@ -41,6 +41,11 @@ MARGIN_LEFT = 80
 MARGIN_TOP = 120
 MARGIN_RIGHT = 40
 MARGIN_BOTTOM = 100
+
+MAX_WINDOW_WIDTH = 1800
+MAX_WINDOW_HEIGHT = 900
+AIRCRAFT_SCALE_FACTOR = 0.78
+STRATEGY_GAP = 180
 
 NODE_RADIUS = 5
 PAX_RADIUS = 7
@@ -104,7 +109,7 @@ class BoardingVisualiser:
 
         # Create window
         self.screen = pygame.display.set_mode(
-            (self.win_w, self.win_h), pygame.RESIZABLE
+            (self.win_w, self.win_h), pygame.RESIZABLE | pygame.DOUBLEBUF
         )
         pygame.display.set_caption(WINDOW_TITLE)
 
@@ -150,22 +155,20 @@ class BoardingVisualiser:
         data_h = self.data_y_max - self.data_y_min or 1
 
         # Cap to reasonable screen size; cabin is very wide (125×10)
-        max_win_w = 1200
-        max_win_h = 550
-        available_w = max_win_w - MARGIN_LEFT - MARGIN_RIGHT
-        available_h = max_win_h - MARGIN_TOP - MARGIN_BOTTOM
+        available_w = MAX_WINDOW_WIDTH - MARGIN_LEFT - MARGIN_RIGHT
+        available_h = MAX_WINDOW_HEIGHT - MARGIN_TOP - MARGIN_BOTTOM
 
         # Scale uniformly: fit in available area while keeping aspect ratio
         scale_x = available_w / data_w
         scale_y = available_h / data_h
-        self.scale = min(scale_x, scale_y)
+        self.scale = min(scale_x, scale_y) * AIRCRAFT_SCALE_FACTOR
 
         self.draw_w = int(data_w * self.scale)
         self.draw_h = int(data_h * self.scale)
-        self.y_offset = self.draw_h + 120
+        self.y_offset = self.draw_h + STRATEGY_GAP
 
         self.win_w = self.draw_w + MARGIN_LEFT + MARGIN_RIGHT
-        self.win_h = self.draw_h * 2 + 120 + MARGIN_TOP + MARGIN_BOTTOM
+        self.win_h = self.draw_h * 2 + STRATEGY_GAP + MARGIN_TOP + MARGIN_BOTTOM
 
         # Precompute node screen positions
         self.node_pos: Dict[str, Tuple[int, int]] = {}
@@ -211,8 +214,10 @@ class BoardingVisualiser:
             if p:
                 pos = (p[0], p[1] + offset_y)
                 pygame.draw.circle(self.screen, DOOR_COLOR, pos, DOOR_RADIUS, 2)
+                label_rect = self.font_sm.get_rect(label)
                 self.font_sm.render_to(
-                    self.screen, (pos[0] - 4, pos[1] - DOOR_RADIUS - 16),
+                    self.screen,
+                    (pos[0] - label_rect.width // 2, pos[1] + DOOR_RADIUS + 3),
                     label, DOOR_COLOR
                 )
 
@@ -281,33 +286,32 @@ class BoardingVisualiser:
         if not sim:
             return
 
+        total_shuffles = int(sim.event_counters.get("seat_shuffle_start", 0))
+        total_stowed = int(sim.event_counters.get("stow_complete", 0))
         seated = sum(1 for a in sim.agents if a.seated)
-        spawned = sum(1 for a in sim.agents if a.spawned)
-        stowing = sum(1 for a in sim.agents if a.luggage_status == "stowing")
         total = len(sim.agents)
+        is_done = all(a.seated for a in sim.agents)
+        completion_time = self._format_elapsed_time(ticks_to_seconds(sim.tick))
+        title_text = f"{title}  COMPLETED ({completion_time})" if is_done else title
         
         # Section Title
-        self.font_big.render_to(self.screen, (20, 20 + offset_y), title, ACCENT)
+        self.font_big.render_to(self.screen, (20, 20 + offset_y), title_text, ACCENT)
 
-        # Stats row
-        y = 55 + offset_y
+        # Totals row (non-live counters only)
+        y = 50 + offset_y
         stats = [
-            f"Tick: {sim.tick}",
-            f"Spawned: {spawned}/{total}",
-            f"Seated: {seated}/{total}",
-            f"Stowing: {stowing}",
-            f"Head-on: {sum(1 for a in sim.agents if a.intent == 'resolveHeadOn')}",
-            f"Shuffles: {sum(1 for a in sim.agents if a.intent == 'resolveSeatBlock')}"
+            f"TOTAL SHUFFLES: {total_shuffles}",
+            f"TOTAL STOWED: {total_stowed}",
         ]
         x = 20
         for s in stats:
             self.font_med.render_to(self.screen, (x, y), s, TEXT_COLOR)
-            x += 160
+            x += 300
 
-        # Progress bar
-        bar_x, bar_y, bar_w, bar_h = 20, 82 + offset_y, self.win_w - 40, 12
+        # Completion progress bar
+        bar_x, bar_y, bar_w, bar_h = 20, 74 + offset_y, self.win_w - 40, 10
         progress = seated / total if total > 0 else 0
-        pygame.draw.rect(self.screen, GRID_COLOR, (bar_x, bar_y, bar_w, bar_h), border_radius=6)
+        pygame.draw.rect(self.screen, GRID_COLOR, (bar_x, bar_y, bar_w, bar_h), border_radius=5)
         fill_w = int(bar_w * progress)
         if fill_w > 0:
             grad_color = (
@@ -316,23 +320,26 @@ class BoardingVisualiser:
                 int(ACCENT[2] + (ACCENT2[2] - ACCENT[2]) * progress),
             )
             pygame.draw.rect(
-                self.screen, grad_color, (bar_x, bar_y, fill_w, bar_h), border_radius=6
-            )
-        pct_text = f"{progress * 100:.0f}%"
-        self.font_sm.render_to(
-            self.screen, (bar_x + bar_w + 8, bar_y - 1), pct_text, TEXT_COLOR
-        )
-
-        # Status
-        is_done = all(a.seated for a in sim.agents)
-        if is_done:
-            self.font_med.render_to(
-                self.screen, (20, 110 + offset_y),
-                f"✓ COMPLETED in {sim.tick} ticks", ACCENT2
+                self.screen, grad_color, (bar_x, bar_y, fill_w, bar_h), border_radius=5
             )
 
     def _draw_global_hud(self) -> None:
         """Global HUD like legend and controls, placed at bottom."""
+        # Single centered top counter for both strategies
+        current_tick = max(
+            self.sim_std.tick if self.sim_std else 0,
+            self.sim_pyramid.tick if self.sim_pyramid else 0,
+        )
+        elapsed_time = self._format_elapsed_time(ticks_to_seconds(current_tick))
+        top_text = f"Tick: {current_tick}  |  Time: {elapsed_time}"
+        top_rect = self.font_big.get_rect(top_text)
+        self.font_big.render_to(
+            self.screen,
+            ((self.win_w - top_rect.width) // 2, 16),
+            top_text,
+            TEXT_COLOR,
+        )
+
         # Legend
         legend_y = self.win_h - 40
         x = 20
@@ -348,18 +355,36 @@ class BoardingVisualiser:
         self.font_sm.render_to(self.screen, (x + 20, legend_y), "Stowing", TEXT_DIM)
         x += 100
 
+        # Seat-shuffle action symbol in legend (yellow halo only)
+        halo_cx, halo_cy = x + 6, legend_y + 6
+        halo = pygame.Surface((36, 36), pygame.SRCALPHA)
+        pygame.draw.circle(halo, (255, 255, 80, 85), (18, 18), 14)
+        self.screen.blit(halo, (halo_cx - 18, halo_cy - 18))
+        pygame.draw.circle(self.screen, (150, 150, 150), (halo_cx, halo_cy), 5)
+        pygame.draw.circle(self.screen, (255, 255, 80), (halo_cx, halo_cy), 12, 3)
+        self.font_sm.render_to(self.screen, (x + 20, legend_y), "Shuffle", TEXT_DIM)
+        x += 100
+
         # Controls & Speed
         if self.paused:
             self.font_med.render_to(
                 self.screen, (20, self.win_h - 70), "▐▐  PAUSED", ACCENT
             )
-        speed_txt = f"Speed: {1000 // self.tick_delay:.0f} tps" if self.tick_delay > 0 else "Speed: MAX"
-        self.font_med.render_to(self.screen, (120, self.win_h - 70), speed_txt, TEXT_COLOR)
-
-        controls = "SPACE: pause  |  ↑↓: speed  |  R: restart  |  Q: quit"
+        controls = "SPACE: pause  |  <- ->: speed  |  R: restart  |  Q: quit"
         self.font_sm.render_to(
             self.screen, (self.win_w - 420, self.win_h - 40), controls, TEXT_DIM
         )
+        speed_txt = f"Speed: {1000 // self.tick_delay:.0f} tps" if self.tick_delay > 0 else "Speed: MAX"
+        self.font_sm.render_to(self.screen, (self.win_w - 420, self.win_h - 22), speed_txt, TEXT_DIM)
+
+    @staticmethod
+    def _format_elapsed_time(seconds: float) -> str:
+        total_seconds = max(0, int(round(seconds)))
+        hours, rem = divmod(total_seconds, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
 
     # --- Main loop ---
 
@@ -410,9 +435,9 @@ class BoardingVisualiser:
                     self.running = False
                 elif event.key == pygame.K_SPACE:
                     self.paused = not self.paused
-                elif event.key == pygame.K_UP:
+                elif event.key in (pygame.K_RIGHT, pygame.K_UP):
                     self.tick_delay = max(self.tick_delay - DELAY_STEP, MIN_DELAY)
-                elif event.key == pygame.K_DOWN:
+                elif event.key in (pygame.K_LEFT, pygame.K_DOWN):
                     self.tick_delay = min(self.tick_delay + DELAY_STEP, MAX_DELAY)
                 elif event.key == pygame.K_r:
                     self._reset_simulation()

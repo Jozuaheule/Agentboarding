@@ -16,11 +16,10 @@ This phase delivers a **minimal but working** agent-based simulation of the Boei
 |---|---|
 | `simulation.py` | Core ABM simulation engine |
 | `visualiser.py` | Pygame real-time animation |
-| `Graph_and_manifest/nodes_787.xlsx` | Cabin graph nodes (pre-existing) |
-| `Graph_and_manifest/edges_787.xlsx` | Cabin graph edges (pre-existing) |
-| `Graph_and_manifest/generated_manifest.xlsx` | Passenger manifest (pre-existing) |
-| `Graph_and_manifest/generate_passenger_manifest_run.py` | Manifest generator (pre-existing) |
-| `Graph_and_manifest/visualize_787_layout.py` | Static graph plot (pre-existing) |
+| `manifest_generation/graph/nodes_787.xlsx` | Cabin graph nodes |
+| `manifest_generation/graph/edges_787.xlsx` | Cabin graph edges |
+| `manifest_generation/generated_manifest.xlsx` | Passenger manifest |
+| `manifest_generation/generate_passenger_manifest_run.py` | Manifest generator |
 
 ### What's simplified in Phase 1
 

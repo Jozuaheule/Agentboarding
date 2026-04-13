@@ -53,17 +53,14 @@ def _resolve_existing_path(*candidates: Path) -> Path:
 NODES_FILE = _resolve_existing_path(
     GRAPH_DIR / "nodes_787.xlsx",
     DATA_DIR / "nodes_787.xlsx",
-    PROJECT_ROOT / "Graph_and_manifest" / "nodes_787.xlsx",
 )
 EDGES_FILE = _resolve_existing_path(
     GRAPH_DIR / "edges_787.xlsx",
     DATA_DIR / "edges_787.xlsx",
-    PROJECT_ROOT / "Graph_and_manifest" / "edges_787.xlsx",
 )
 MANIFEST_FILE = _resolve_existing_path(
     DATA_DIR / "generated_manifest_1.xlsx",
     PROJECT_ROOT / "generated_manifest_1.xlsx",
-    PROJECT_ROOT / "Graph_and_manifest" / "generated_manifest_1.xlsx",
 )
 
 VISUALIZE_ONE = True  # Set False to batch-run all sequentially

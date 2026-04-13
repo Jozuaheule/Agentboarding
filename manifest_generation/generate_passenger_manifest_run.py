@@ -102,8 +102,6 @@ def validate_probability(name: str, value: Optional[float]) -> None:
 def resolve_graph_file(filename: str) -> Path:
     candidates = [
         BASE_DIR / "graph" / filename,
-        BASE_DIR / "manifest_generation" / "graph" / filename,
-        BASE_DIR / "Graph_and_manifest" / filename,
         BASE_DIR / filename,
     ]
     for candidate in candidates:
@@ -117,10 +115,6 @@ def resolve_output_base(filename: str) -> Path:
     graph_dir = BASE_DIR / "graph"
     if graph_dir.exists():
         return BASE_DIR / filename
-
-    graph_dir = BASE_DIR / "Graph_and_manifest"
-    if graph_dir.exists():
-        return graph_dir / filename
     return BASE_DIR / filename
 
 
