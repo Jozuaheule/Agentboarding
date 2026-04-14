@@ -1,0 +1,37 @@
+{
+  "replications": 203,
+  "master_seed": 20260413,
+  "batch_size": 10,
+  "policy_a": "std",
+  "policy_b": "pyramid",
+  "normality_alpha": 0.05,
+  "load_factor": 0.85,
+  "luggage_probability": 0.75,
+  "cross_zone_violation_rate": 0.05,
+  "stow_config": {
+    "dist": "weibull",
+    "shape_k": 1.7,
+    "scale_lambda_s": 16.0,
+    "low_s": 15.0,
+    "high_s": 45.0
+  },
+  "shuffle_config": {
+    "model": "triangular",
+    "low_s": 15.0,
+    "high_s": 26.0,
+    "mode_s": 20.5
+  },
+  "study_context": {
+    "fixed_assumptions": [
+      "aircraft layout and cabin topology",
+      "seat map and class structure",
+      "load factor",
+      "luggage probability",
+      "active boarding doors",
+      "behavioral parameter settings",
+      "simulation logic and completion condition"
+    ],
+    "independent_variable": "boarding strategy",
+    "primary_dependent_variable": "total boarding time"
+  }
+}

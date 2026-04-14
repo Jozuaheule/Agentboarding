@@ -579,19 +579,16 @@ Passenger release rule:
 Sequential by group order (Group 1 first, followed by 2, 3, 4, and 5). Within
 each group, passengers are released in a uniformly random order.
 1.3.7. Final set of strategies to be compared
-Based on the detailed definitions established in the preceding sections, the core experimental set of
-boarding strategies proposed for this study is:
-1. Random boarding with assigned seats through the middle door;
-2. Random boarding with assigned seats through front and rear doors;
-3. Back-to-front zonal boarding with front and middle doors;
-4. Back-to-front zonal boarding through the middle door;
-5. Outside-in boarding with front and middle doors;
-6. Modified reverse pyramid with front and middle doors.
-This set of six strategies is suﬀiciently broad to capture unstructured baseline boarding, classical grouped
-boarding adapted for both single- and dual-jetbridge operations, and highly optimized hybrid methods
-from the academic literature. By evaluating this core set, the study can comprehensively analyze the
-impact of passenger sequencing, spatial segregation, and multiple access doors on a twin-aisle wide-body
-architecture.
+Based on the final study design, the comparative experiment evaluates exactly two boarding strategies
+under one fixed operating context:
+1. Back-to-front zonal boarding with front and middle doors;
+2. Modified reverse pyramid boarding with front and middle doors.
+In this comparative phase, load factor and luggage prevalence are treated as fixed operating assumptions
+of the route context, not as scenario variables to be varied experimentally. The independent variable is
+boarding strategy, and the primary dependent variable is total boarding time.
+The statistical comparison is executed with paired Monte Carlo replications: for each replication, one
+manifest realization is generated under the fixed assumptions and both strategies are evaluated on that
+same realization.
 
 --- Page 13 ---
 2 Conceptual Agent-based Model

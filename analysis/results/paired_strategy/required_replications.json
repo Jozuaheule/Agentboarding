@@ -1,0 +1,18 @@
+{
+  "required_replications": 203,
+  "completed_pairs": 203,
+  "target_ci_half_width_s": 10.0,
+  "achieved_ci_half_width_s": 9.955272716703163,
+  "ci_level": 0.95,
+  "min_replications": 30,
+  "max_replications": 500,
+  "master_seed": 20260413,
+  "policy_a": "std",
+  "policy_b": "pyramid",
+  "load_factor": 0.85,
+  "luggage_probability": 0.75,
+  "cross_zone_violation_rate": 0.05,
+  "formal_stopping_criterion": "approach_1_ci_half_width",
+  "supporting_diagnostic": "approach_2_running_cv",
+  "stopping_rule_met": true
+}

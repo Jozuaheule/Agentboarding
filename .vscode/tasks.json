@@ -1,0 +1,32 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "run-verification-suite-main",
+			"type": "shell",
+			"command": "/opt/anaconda3/envs/ABMS/bin/python",
+			"args": [
+				"verification/run_verification_suite.py"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "run-calibration-main",
+			"type": "shell",
+			"command": "/opt/anaconda3/envs/ABMS/bin/python",
+			"args": [
+				"calibration/calibration_runner.py"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "rerun-calibration-with-violation-logging",
+			"type": "shell",
+			"command": "/opt/anaconda3/envs/ABMS/bin/python",
+			"args": [
+				"calibration/calibration_runner.py"
+			],
+			"isBackground": false
+		}
+	]
+}

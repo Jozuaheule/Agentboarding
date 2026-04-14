@@ -84,6 +84,8 @@ OUTPUT_COLUMNS = [
     "lateral_speed",
     "has_luggage",
     "stow_duration",
+    "violation_pick_score",
+    "violation_insert_score",
     "zone_std",
     "zone_outsidein",
     "zone_pyramid",
@@ -477,6 +479,9 @@ def build_manifest(
     manifest_df["preferred_speed"] = rng.choice([2, 4], size=len(manifest_df))
     manifest_df["lateral_speed"] = 1
     manifest_df["has_luggage"] = rng.random(size=len(manifest_df)) < luggage_probability
+    # Precompute deterministic scores used by same-door violation reshuffling.
+    manifest_df["violation_pick_score"] = rng.random(size=len(manifest_df))
+    manifest_df["violation_insert_score"] = rng.random(size=len(manifest_df))
 
     stow_duration = np.full(len(manifest_df), np.nan)
     luggage_mask = manifest_df["has_luggage"].to_numpy()

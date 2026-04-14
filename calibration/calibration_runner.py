@@ -13,6 +13,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from calibration.calibration_config import (
     BASELINE_BOARDING_POLICY,
+    CALIBRATION_CROSS_ZONE_VIOLATION_RATE,
     CALIBRATION_LOAD_FACTOR,
     CALIBRATION_LUGGAGE_PROBABILITY,
     CALIBRATION_N_MANIFESTS,
@@ -177,6 +178,7 @@ def run_calibration() -> None:
                 seed=SEED,
                 boarding_policy=BASELINE_BOARDING_POLICY,
                 shuffle_config=shuffle_config,
+                cross_zone_violation_rate=CALIBRATION_CROSS_ZONE_VIOLATION_RATE,
             )
             metrics = sim.run_with_metrics(verbose=False, enforce_completion=False)
 
@@ -187,6 +189,7 @@ def run_calibration() -> None:
                     "boarding_policy": BASELINE_BOARDING_POLICY,
                     "load_factor": CALIBRATION_LOAD_FACTOR,
                     "luggage_probability": CALIBRATION_LUGGAGE_PROBABILITY,
+                    "cross_zone_violation_rate": CALIBRATION_CROSS_ZONE_VIOLATION_RATE,
                     "stow_dist": stow_config.dist,
                     "stow_shape_k": stow_config.shape_k,
                     "stow_scale_lambda_s": stow_config.scale_lambda_s,
@@ -237,6 +240,7 @@ def run_calibration() -> None:
                 "shuffle_low_s",
                 "shuffle_mode_s",
                 "shuffle_high_s",
+                "cross_zone_violation_rate",
             ]
         ]
         .drop_duplicates(subset=["parameter_set_id"])
@@ -272,6 +276,7 @@ def main() -> None:
     print(f"  Boarding policy   : {BASELINE_BOARDING_POLICY}")
     print(f"  Load factor       : {CALIBRATION_LOAD_FACTOR}")
     print(f"  Luggage prob      : {CALIBRATION_LUGGAGE_PROBABILITY}")
+    print(f"  Violation rate    : {CALIBRATION_CROSS_ZONE_VIOLATION_RATE}")
     print(f"  Manifest count    : {CALIBRATION_N_MANIFESTS}")
     print(f"  Default stow      : {STOW_DIST} k={STOW_SHAPE}, scale={STOW_SCALE_S}s")
     if SHUFFLE_MODEL == "triangular":

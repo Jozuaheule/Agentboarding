@@ -17,9 +17,10 @@ from __future__ import annotations
 import random
 from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import networkx as nx
+import numpy as np
 import pandas as pd
 
 from calibration.calibration_config import (
@@ -59,8 +60,8 @@ EDGES_FILE = _resolve_existing_path(
     DATA_DIR / "edges_787.xlsx",
 )
 MANIFEST_FILE = _resolve_existing_path(
-    DATA_DIR / "generated_manifest_1.xlsx",
-    PROJECT_ROOT / "generated_manifest_1.xlsx",
+    DATA_DIR / "generated_manifest_2.xlsx",
+    PROJECT_ROOT / "generated_manifest_2.xlsx",
 )
 
 VISUALIZE_ONE = True  # Set False to batch-run all sequentially
@@ -906,16 +907,25 @@ class BoardingSimulation:
     def __init__(
         self,
         env: CabinEnvironment,
-        manifest_file: Path,
+        manifest_file: Union[Path, pd.DataFrame],
         seed: int = SEED,
         boarding_policy: str = "random",
         shuffle_config: Optional[ShuffleConfig] = None,
+        cross_zone_violation_rate: float = 0.05,
+        log_summary: bool = True,
     ) -> None:
         self.env = env
         self.rng = random.Random(seed)
         self.tick = 0
         self.occupied: Set[str] = set()
         self.boarding_policy = boarding_policy
+        rate = float(cross_zone_violation_rate)
+        if not 0.0 <= rate <= 1.0:
+            raise ValueError(
+                f"cross_zone_violation_rate must be between 0 and 1. Received: {cross_zone_violation_rate}"
+            )
+        self.cross_zone_violation_rate = rate
+        self.log_summary = bool(log_summary)
         self.shuffle_config = self._normalize_shuffle_config(shuffle_config)
         self.shuffle_low_ticks = seconds_to_ticks(self.shuffle_config.low_s, min_ticks=1)
         self.shuffle_high_ticks = seconds_to_ticks(self.shuffle_config.high_s, min_ticks=1)
@@ -938,7 +948,7 @@ class BoardingSimulation:
             "yield_actions": 0,
         }
 
-        df = pd.read_excel(manifest_file)
+        df = self._load_manifest_dataframe(manifest_file)
         
         # Enforce boarding policies
         if self.boarding_policy == "random":
@@ -952,6 +962,9 @@ class BoardingSimulation:
         elif self.boarding_policy == "pyramid":
             df = df.sort_values(by="zone_pyramid", ascending=True)
             df = df.groupby(["zone_pyramid"], group_keys=False).apply(lambda x: x.sample(frac=1, random_state=seed)).reset_index(drop=True)
+
+        df = self._apply_cross_zone_violations(df)
+
         self.agents: List[PassengerAgent] = []
         missing_seats = 0
 
@@ -998,7 +1011,7 @@ class BoardingSimulation:
             )
             self.agents.append(agent)
 
-        if missing_seats:
+        if missing_seats and self.log_summary:
             print(f"  Warning: {missing_seats} passengers skipped (seat node not found)")
 
         self.agents_by_id: Dict[str, PassengerAgent] = {
@@ -1016,9 +1029,81 @@ class BoardingSimulation:
         # and shuffled within zones during policy application.
         # This preserves the exact group release sequence.
 
-        print(f"Simulation created with {len(self.agents)} passengers")
-        for door, q in self.spawn_queues.items():
-            print(f"  Door {door}: {len(q)} passengers")
+        if self.log_summary:
+            print(f"Simulation created with {len(self.agents)} passengers")
+
+    @staticmethod
+    def _load_manifest_dataframe(manifest_file: Union[Path, pd.DataFrame]) -> pd.DataFrame:
+        if isinstance(manifest_file, pd.DataFrame):
+            return manifest_file.copy()
+        return pd.read_excel(manifest_file)
+
+    def _apply_cross_zone_violations(self, df: pd.DataFrame) -> pd.DataFrame:
+        if self.boarding_policy == "random" or self.cross_zone_violation_rate <= 0 or len(df) < 2:
+            return df.reset_index(drop=True)
+
+        ordered = df.reset_index(drop=True).copy()
+
+        # Violations are applied within each effective door queue (same-door preservation).
+        # Selection and insertion can happen anywhere in the per-door sequence,
+        # not just at zone boundaries.
+        if "preferred_door" in ordered.columns:
+            effective_door = ordered["preferred_door"].astype(str).str.upper()
+        else:
+            effective_door = pd.Series([""] * len(ordered), index=ordered.index)
+        fallback_door = np.where(
+            ordered.get("class", "economy").astype(str).str.lower().eq("business"),
+            "F",
+            "M",
+        )
+        effective_door = np.where(effective_door.isin(["F", "M"]), effective_door, fallback_door)
+        ordered["_effective_door"] = effective_door
+
+        for door in ("F", "M"):
+            door_indices = ordered.index[ordered["_effective_door"] == door].to_numpy()
+            if len(door_indices) < 2:
+                continue
+
+            n = len(door_indices)
+            n_violators = int(round(self.cross_zone_violation_rate * n))
+            n_violators = max(0, min(n_violators, n - 1))
+            if n_violators <= 0:
+                continue
+
+            door_rows = ordered.loc[door_indices].reset_index(drop=True)
+
+            pick_scores = pd.to_numeric(door_rows.get("violation_pick_score"), errors="coerce")
+            if pick_scores.isna().any():
+                pick_scores = pick_scores.fillna(pd.Series([self.rng.random() for _ in range(n)]))
+            violator_positions = np.argsort(pick_scores.to_numpy())[:n_violators]
+
+            insert_scores = pd.to_numeric(door_rows.get("violation_insert_score"), errors="coerce")
+            if insert_scores.isna().any():
+                insert_scores = insert_scores.fillna(pd.Series([self.rng.random() for _ in range(n)]))
+            target_positions = np.sort(np.argsort(insert_scores.to_numpy())[:n_violators])
+
+            violator_df = door_rows.iloc[violator_positions].copy().sort_values("violation_insert_score", kind="mergesort")
+            remaining_df = door_rows.drop(index=door_rows.index[violator_positions]).reset_index(drop=True)
+
+            target_set = set(int(pos) for pos in target_positions)
+            rebuilt_rows: List[pd.Series] = []
+            v_ptr = 0
+            r_ptr = 0
+            for pos in range(n):
+                if pos in target_set and v_ptr < len(violator_df):
+                    rebuilt_rows.append(violator_df.iloc[v_ptr])
+                    v_ptr += 1
+                elif r_ptr < len(remaining_df):
+                    rebuilt_rows.append(remaining_df.iloc[r_ptr])
+                    r_ptr += 1
+                elif v_ptr < len(violator_df):
+                    rebuilt_rows.append(violator_df.iloc[v_ptr])
+                    v_ptr += 1
+
+            rebuilt_df = pd.DataFrame(rebuilt_rows).reset_index(drop=True)
+            ordered.loc[door_indices, :] = rebuilt_df.to_numpy()
+
+        return ordered.drop(columns=["_effective_door"]).reset_index(drop=True)
 
     @staticmethod
     def _normalize_shuffle_config(config: Optional[ShuffleConfig]) -> ShuffleConfig:
