@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import html
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,20 +51,6 @@ def _df_to_markdown_table(df: pd.DataFrame) -> str:
     for _, row in df.iterrows():
         lines.append("| " + " | ".join(_format_value(row[column]) for column in columns) + " |")
     return "\n".join(lines)
-
-
-def _df_to_html_table(df: pd.DataFrame) -> str:
-    if df.empty:
-        return "<p>No data available.</p>"
-
-    escaped_columns = [html.escape(str(column)) for column in df.columns]
-    header = "<tr>" + "".join(f"<th>{column}</th>" for column in escaped_columns) + "</tr>"
-    body_rows: List[str] = []
-    for _, row in df.iterrows():
-        cells = "".join(f"<td>{html.escape(_format_value(row[column]))}</td>" for column in df.columns)
-        body_rows.append(f"<tr>{cells}</tr>")
-
-    return "<table>" + header + "".join(body_rows) + "</table>"
 
 
 def _load_report_inputs(output_dir: Path) -> dict:
@@ -119,34 +104,6 @@ def _build_figure_explanations_markdown() -> List[str]:
         "- Conclusion: supports whether the paired t-test normality assumption is reasonable.",
         "",
     ]
-
-
-def _build_figure_explanations_html() -> str:
-    return "\n".join(
-        [
-            "<h2>Figure Explanations</h2>",
-            "<div class='note'>",
-            "<h3>Boarding time by strategy</h3>",
-            "<ul>",
-            "<li>What it shows: distribution of total boarding times per strategy (median, spread, and outliers).</li>",
-            "<li>How to read it: lower boxes/medians mean faster boarding; narrower spread means more consistency.</li>",
-            "<li>Conclusion: compare central tendency and spread to assess speed and reliability tradeoffs.</li>",
-            "</ul>",
-            "<h3>Histogram of paired differences with fitted normal density</h3>",
-            "<ul>",
-            "<li>What it shows: frequency distribution of paired differences (zonal - pyramid) with a fitted normal curve overlay.</li>",
-            "<li>How to read it: values above 0 indicate pyramid is faster; the red curve is a visual normal-reference guide.</li>",
-            "<li>Conclusion: center and spread indicate average gain and variability; compare bars vs curve for rough normality fit.</li>",
-            "</ul>",
-            "<h3>Q-Q plot of paired differences</h3>",
-            "<ul>",
-            "<li>What it shows: observed quantiles of paired differences against theoretical normal quantiles.</li>",
-            "<li>How to read it: points close to a straight line suggest approximate normality; systematic bends indicate departures.</li>",
-            "<li>Conclusion: supports whether the paired t-test normality assumption is reasonable.</li>",
-            "</ul>",
-            "</div>",
-        ]
-    )
 
 
 def generate_markdown_report(output_dir: Path) -> str:
@@ -229,110 +186,19 @@ def generate_markdown_report(output_dir: Path) -> str:
     return "\n".join(md).strip() + "\n"
 
 
-def generate_html_report(output_dir: Path) -> str:
-    inputs = _load_report_inputs(output_dir)
-    config = inputs["config"]
-    strategy_df = inputs["strategy_summary"]
-    infer_df = inputs["inferential_summary"]
-    paired_df = inputs["paired_runs"]
-    failures_df = inputs["run_failures"]
-
-    title = "Paired Boarding Strategy Report"
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    fixed_assumptions = config.get("study_context", {}).get("fixed_assumptions", [])
-
-    html_parts: List[str] = [
-        "<!doctype html>",
-        "<html lang='en'>",
-        "<head>",
-        "<meta charset='utf-8'>",
-        f"<title>{html.escape(title)}</title>",
-        "<style>",
-        "body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 32px auto; max-width: 1100px; line-height: 1.5; color: #1f2937; padding: 0 20px; }",
-        "h1, h2 { color: #111827; }",
-        "table { border-collapse: collapse; width: 100%; margin: 12px 0 24px; font-size: 14px; }",
-        "th, td { border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; vertical-align: top; }",
-        "th { background: #f3f4f6; }",
-        ".note { background: #f9fafb; border-left: 4px solid #60a5fa; padding: 12px 16px; margin: 16px 0; }",
-        ".figure { margin: 20px 0 28px; }",
-        ".figure img { max-width: 100%; height: auto; border: 1px solid #e5e7eb; border-radius: 8px; }",
-        ".muted { color: #6b7280; }",
-        "</style>",
-        "</head>",
-        "<body>",
-        f"<h1>{html.escape(title)}</h1>",
-        f"<p class='muted'>Generated: {html.escape(generated_at)}</p>",
-        "<h2>Study Design</h2>",
-        "<ul>",
-        "<li>Independent variable: boarding strategy</li>",
-        "<li>Primary dependent variable: total boarding time</li>",
-        "<li>Strategies: back-to-front zonal vs modified reverse pyramid</li>",
-        *[f"<li>{html.escape(str(item))}</li>" for item in fixed_assumptions],
-        "</ul>",
-        "<h2>Run Summary</h2>",
-        _df_to_html_table(pd.DataFrame([{
-            "replications": config.get("replications", ""),
-            "master_seed": config.get("master_seed", ""),
-            "load_factor": config.get("load_factor", ""),
-            "luggage_probability": config.get("luggage_probability", ""),
-            "cross_zone_violation_rate": config.get("cross_zone_violation_rate", ""),
-            "paired_runs": int(len(paired_df)),
-            "completed_pairs": int(paired_df["pair_completed"].sum()) if not paired_df.empty else 0,
-            "failed_runs": len(failures_df),
-        }])),
-        "<h2>Descriptive Statistics</h2>",
-        _df_to_html_table(strategy_df),
-        "<h2>Paired Inference</h2>",
-        _df_to_html_table(infer_df),
-        "<h2>Paired Metrics</h2>",
-        _df_to_html_table(paired_df[["replication_id", "boarding_time_zonal", "boarding_time_pyramid", "difference", "ratio", "relative_improvement"]].head(12)) if not paired_df.empty else "<p>No paired results available.</p>",
-        "<h2>Figures</h2>",
-    ]
-
-    for filename, caption in FIGURE_FILES:
-        figure_path = output_dir / filename
-        if figure_path.exists():
-            html_parts.extend([
-                "<div class='figure'>",
-                f"<h3>{html.escape(caption)}</h3>",
-                f"<img src='{html.escape(filename)}' alt='{html.escape(caption)}'>",
-                "</div>",
-            ])
-
-    html_parts.append(_build_figure_explanations_html())
-
-    html_parts.append("<h2>Notes</h2>")
-    html_parts.append("<div class='note'>")
-    for note in _build_summary_notes(inputs):
-        html_parts.append(f"<div>{html.escape(note)}</div>")
-    html_parts.append("</div>")
-
-    if not failures_df.empty:
-        html_parts.extend([
-            "<h2>Failures</h2>",
-            _df_to_html_table(failures_df[["replication_id", "scenario_seed", "strategy", "error_message"]].head(20)),
-        ])
-
-    html_parts.extend(["</body>", "</html>"])
-    return "\n".join(html_parts)
-
-
-def write_paired_strategy_report(output_dir: Path) -> tuple[Path, Path]:
+def write_paired_strategy_report(output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     markdown_text = generate_markdown_report(output_dir)
-    html_text = generate_html_report(output_dir)
 
     markdown_path = output_dir / "paired_strategy_report.md"
-    html_path = output_dir / "paired_strategy_report.html"
 
     markdown_path.write_text(markdown_text, encoding="utf-8")
-    html_path.write_text(html_text, encoding="utf-8")
-    return markdown_path, html_path
+    return markdown_path
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Step 3 (optional): generate markdown/html reports from analysis outputs."
+        description="Step 3 (optional): generate markdown report from analysis outputs."
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     args = parser.parse_args()
@@ -347,11 +213,10 @@ def main() -> None:
             "strategy_descriptive_summary.csv. Run 2_Analyze_Paired_Results.py first."
         )
 
-    markdown_path, html_path = write_paired_strategy_report(output_dir)
+    markdown_path = write_paired_strategy_report(output_dir)
 
     print("Step 3 complete: report outputs generated.")
     print(f"Markdown report: {markdown_path}")
-    print(f"HTML report: {html_path}")
 
 
 if __name__ == "__main__":

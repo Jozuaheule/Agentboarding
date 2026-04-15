@@ -1,6 +1,6 @@
 # Paired Boarding Strategy Report
 
-Generated: 2026-04-15 10:28 UTC
+Generated: 2026-04-15 12:18 UTC
 
 ## Study Design
 - Independent variable: boarding strategy
