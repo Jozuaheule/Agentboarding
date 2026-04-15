@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import matplotlib
 import numpy as np
@@ -15,15 +16,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from analysis.paired_strategy_core import (
-    build_shuffle_config,
-    build_stow_config,
-    replication_seed,
-    run_one_strategy,
+from calibration.calibration_config import (
+    SHUFFLE_HIGH_S,
+    SHUFFLE_LOW_S,
+    SHUFFLE_MODE_S,
+    SHUFFLE_MODEL,
+    STOW_DIST,
+    STOW_SCALE_S,
+    STOW_SHAPE,
+    STOW_UNIFORM_HIGH_S,
+    STOW_UNIFORM_LOW_S,
+    ShuffleConfig,
+    StowConfig,
 )
-from analysis.study_config import DEFAULT_OUTPUT_DIR, DEFAULT_STUDY_CONFIG, StudyConfig
 from manifest_generation.generate_passenger_manifest_run import (
     BUSINESS_LOAD_FACTOR,
+    LUGGAGE_PROBABILITY,
+    LOAD_FACTOR,
     ECONOMY_LOAD_FACTOR,
     EDGES_FILE,
     NODES_FILE,
@@ -33,10 +42,138 @@ from manifest_generation.generate_passenger_manifest_run import (
     load_input_files,
     resolve_graph_file,
 )
-from simulation import CabinEnvironment
+from simulation import BoardingSimulation, CabinEnvironment
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "analysis" / "results" / "paired_strategy"
+
+
+@dataclass(frozen=True)
+class StudyConfig:
+    master_seed: int = 20260413
+    policy_a: str = "std"
+    policy_b: str = "pyramid"
+    load_factor: float = 0.85
+    luggage_probability: float = 0.75
+    cross_zone_violation_rate: float = 0.05
+    batch_size: int = 10
+    ci_level: float = 0.95
+    target_ci_half_width_s: float = 10.0
+    min_replications: int = 30
+    max_replications: int = 500
+    default_replications: int = 100
+
+
+DEFAULT_STUDY_CONFIG = StudyConfig()
+
+
+@dataclass(frozen=True)
+class RunConfig:
+    replications: int = 100
+    master_seed: int = 20260413
+    batch_size: int = 10
+    policy_a: str = "std"
+    policy_b: str = "pyramid"
+    normality_alpha: float = 0.05
+    load_factor: float = LOAD_FACTOR
+    luggage_probability: float = LUGGAGE_PROBABILITY
+    cross_zone_violation_rate: float = 0.05
+
+
+def replication_seed(master_seed: int, replication_id: int) -> int:
+    return int(master_seed) + int(replication_id) - 1
+
+
+def build_stow_config() -> StowConfig:
+    return StowConfig(
+        dist=STOW_DIST,
+        shape_k=STOW_SHAPE,
+        scale_lambda_s=STOW_SCALE_S,
+        low_s=STOW_UNIFORM_LOW_S,
+        high_s=STOW_UNIFORM_HIGH_S,
+    )
+
+
+def build_shuffle_config() -> ShuffleConfig:
+    return ShuffleConfig(
+        model=SHUFFLE_MODEL,
+        low_s=SHUFFLE_LOW_S,
+        high_s=SHUFFLE_HIGH_S,
+        mode_s=SHUFFLE_MODE_S,
+    )
+
+
+def run_one_strategy(
+    env: CabinEnvironment,
+    manifest_df: pd.DataFrame,
+    strategy: str,
+    seed: int,
+    shuffle_config: ShuffleConfig,
+    cross_zone_violation_rate: float,
+) -> Tuple[Dict[str, float], bool, str]:
+    try:
+        sim = BoardingSimulation(
+            env=env,
+            manifest_file=manifest_df,
+            seed=seed,
+            boarding_policy=strategy,
+            shuffle_config=shuffle_config,
+            cross_zone_violation_rate=cross_zone_violation_rate,
+            log_summary=False,
+        )
+        metrics = sim.run_with_metrics(verbose=False, enforce_completion=False)
+        completed = bool(metrics.get("completion_success", 0.0) > 0.5)
+        return metrics, completed, ""
+    except Exception as exc:  # noqa: BLE001
+        return {}, False, f"{type(exc).__name__}: {exc}"
+
+
+def summarize_by_strategy(runs_df: pd.DataFrame) -> pd.DataFrame:
+    completed = runs_df[runs_df["completed"].astype(bool)].copy()
+    summary_rows: List[Dict[str, object]] = []
+    for strategy, group in completed.groupby("strategy"):
+        values = group["total_boarding_time"].dropna().to_numpy(dtype=float)
+        if len(values) == 0:
+            continue
+        summary_rows.append(
+            {
+                "strategy": strategy,
+                "n_completed": int(len(values)),
+                "mean": float(np.mean(values)),
+                "std": float(np.std(values, ddof=1)) if len(values) > 1 else 0.0,
+                "median": float(np.median(values)),
+                "min": float(np.min(values)),
+                "q10": float(np.quantile(values, 0.10)),
+                "q25": float(np.quantile(values, 0.25)),
+                "q75": float(np.quantile(values, 0.75)),
+                "q90": float(np.quantile(values, 0.90)),
+                "max": float(np.max(values)),
+            }
+        )
+    return pd.DataFrame(summary_rows).sort_values("strategy")
+
+
+def write_study_config(config: RunConfig, output_dir: Path) -> None:
+    payload = asdict(config)
+    payload["stow_config"] = asdict(build_stow_config())
+    payload["shuffle_config"] = asdict(build_shuffle_config())
+    payload["study_context"] = {
+        "fixed_assumptions": [
+            "aircraft layout and cabin topology",
+            "seat map and class structure",
+            "load factor",
+            "luggage probability",
+            "active boarding doors",
+            "behavioral parameter settings",
+            "simulation logic and completion condition",
+        ],
+        "independent_variable": "boarding strategy",
+        "primary_dependent_variable": "total boarding time",
+    }
+    with (output_dir / "study_config_snapshot.json").open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
 
 
 def _ci_half_width(differences: np.ndarray, ci_level: float) -> float:
@@ -236,7 +373,11 @@ def estimate_required_replications(config: StudyConfig, output_dir: Path) -> Dic
     differences: List[float] = []
     trace_rows: List[Dict[str, object]] = []
     pair_attempt_rows: List[Dict[str, object]] = []
+    run_rows: List[Dict[str, object]] = []
+    pair_rows: List[Dict[str, object]] = []
     stop_replication = config.max_replications
+    total_simulations = config.max_replications * 2
+    simulation_counter = 0
 
     print(
         "[estimate] starting "
@@ -281,12 +422,83 @@ def estimate_required_replications(config: StudyConfig, output_dir: Path) -> Dic
         total_a = float(result_a.get("total_seconds", np.nan))
         total_b = float(result_b.get("total_seconds", np.nan))
         pair_completed = bool(completed_a and completed_b)
+        passenger_count = int(len(manifest_df))
+
+        simulation_counter += 1
+        status_a = "ok" if completed_a else "failed"
+        time_a_text = f"{total_a:.1f}s" if np.isfinite(total_a) else "nan"
+        print(
+            f"[sim {simulation_counter}/{total_simulations}] "
+            f"rep {replication_id}/{config.max_replications} "
+            f"strategy={config.policy_a} seed={seed_i} status={status_a} time={time_a_text}",
+            flush=True,
+        )
+
+        run_rows.append(
+            {
+                "replication_id": replication_id,
+                "scenario_seed": seed_i,
+                "strategy": config.policy_a,
+                "total_boarding_time": total_a,
+                "load_factor": float(config.load_factor),
+                "luggage_probability": float(config.luggage_probability),
+                "cross_zone_violation_rate": float(config.cross_zone_violation_rate),
+                "passenger_count": passenger_count,
+                "completed": bool(completed_a),
+                "error_message": error_a,
+            }
+        )
+
+        simulation_counter += 1
+        status_b = "ok" if completed_b else "failed"
+        time_b_text = f"{total_b:.1f}s" if np.isfinite(total_b) else "nan"
+        print(
+            f"[sim {simulation_counter}/{total_simulations}] "
+            f"rep {replication_id}/{config.max_replications} "
+            f"strategy={config.policy_b} seed={seed_i} status={status_b} time={time_b_text}",
+            flush=True,
+        )
+
+        run_rows.append(
+            {
+                "replication_id": replication_id,
+                "scenario_seed": seed_i,
+                "strategy": config.policy_b,
+                "total_boarding_time": total_b,
+                "load_factor": float(config.load_factor),
+                "luggage_probability": float(config.luggage_probability),
+                "cross_zone_violation_rate": float(config.cross_zone_violation_rate),
+                "passenger_count": passenger_count,
+                "completed": bool(completed_b),
+                "error_message": error_b,
+            }
+        )
 
         diff = float("nan")
+        ratio = float("nan")
+        relative_improvement = float("nan")
         if completed_a and completed_b:
             diff = total_a - total_b
             if np.isfinite(diff):
                 differences.append(diff)
+            if np.isfinite(total_a) and total_a > 0 and np.isfinite(total_b):
+                ratio = total_b / total_a
+                relative_improvement = (total_a - total_b) / total_a
+
+        pair_rows.append(
+            {
+                "replication_id": replication_id,
+                "scenario_seed": seed_i,
+                "boarding_time_zonal": total_a,
+                "boarding_time_pyramid": total_b,
+                "difference": diff,
+                "ratio": ratio,
+                "relative_improvement": relative_improvement,
+                "pair_completed": pair_completed,
+                "zonal_error": error_a,
+                "pyramid_error": error_b,
+            }
+        )
 
         pair_attempt_rows.append(
             {
@@ -386,9 +598,33 @@ def estimate_required_replications(config: StudyConfig, output_dir: Path) -> Dic
         target_half_width=config.target_ci_half_width_s,
     )
 
+    runs_df = pd.DataFrame(run_rows)
+    pairs_df = pd.DataFrame(pair_rows)
+    runs_df.to_csv(output_dir / "paired_runs_long.csv", index=False)
+    pairs_df.to_csv(output_dir / "paired_runs_pairs.csv", index=False)
+
+    failures_df = runs_df[~runs_df["completed"].astype(bool)].copy() if not runs_df.empty else pd.DataFrame()
+    failures_df.to_csv(output_dir / "run_failures.csv", index=False)
+
+    descriptive_df = summarize_by_strategy(runs_df) if not runs_df.empty else pd.DataFrame()
+    descriptive_df.to_csv(output_dir / "strategy_descriptive_summary.csv", index=False)
+
+    run_config = RunConfig(
+        replications=int(len(pair_rows)),
+        master_seed=int(config.master_seed),
+        batch_size=int(config.batch_size),
+        policy_a=config.policy_a,
+        policy_b=config.policy_b,
+        load_factor=float(config.load_factor),
+        luggage_probability=float(config.luggage_probability),
+        cross_zone_violation_rate=float(config.cross_zone_violation_rate),
+    )
+    write_study_config(run_config, output_dir)
+
     final_ci = float(trace_df.iloc[-1]["ci_half_width"]) if not trace_df.empty else float("nan")
     summary = {
         "required_replications": int(stop_replication),
+        "replications_attempted": int(len(pair_rows)),
         "completed_pairs": int(len(differences)),
         "target_ci_half_width_s": float(config.target_ci_half_width_s),
         "achieved_ci_half_width_s": final_ci,

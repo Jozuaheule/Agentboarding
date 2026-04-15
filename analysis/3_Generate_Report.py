@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import argparse
 import html
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List
+from typing import List
 
 import pandas as pd
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "analysis" / "results" / "paired_strategy"
 
 FIGURE_FILES = [
     ("fig_boxplot_boarding_time.png", "Boarding time by strategy"),
@@ -131,7 +135,7 @@ def generate_markdown_report(output_dir: Path) -> str:
         "paired_runs": int(len(paired_df)),
         "completed_pairs": int(paired_df["pair_completed"].sum()) if not paired_df.empty else 0,
         "failed_runs": len(failures_df),
-    }])) )
+    }])))
     md.append("")
 
     md.append("## Descriptive Statistics")
@@ -274,3 +278,31 @@ def write_paired_strategy_report(output_dir: Path) -> tuple[Path, Path]:
     markdown_path.write_text(markdown_text, encoding="utf-8")
     html_path.write_text(html_text, encoding="utf-8")
     return markdown_path, html_path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Step 3 (optional): generate markdown/html reports from analysis outputs."
+    )
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    args = parser.parse_args()
+
+    output_dir = args.output_dir
+    inferential_path = output_dir / "paired_inferential_summary.csv"
+    descriptive_path = output_dir / "strategy_descriptive_summary.csv"
+
+    if not inferential_path.exists() or not descriptive_path.exists():
+        raise FileNotFoundError(
+            "Missing step-2 outputs paired_inferential_summary.csv or "
+            "strategy_descriptive_summary.csv. Run 2_Analyze_Paired_Results.py first."
+        )
+
+    markdown_path, html_path = write_paired_strategy_report(output_dir)
+
+    print("Step 3 complete: report outputs generated.")
+    print(f"Markdown report: {markdown_path}")
+    print(f"HTML report: {html_path}")
+
+
+if __name__ == "__main__":
+    main()
