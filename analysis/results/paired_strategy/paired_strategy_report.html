@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang='en'>
+<head>
+<meta charset='utf-8'>
+<title>Paired Boarding Strategy Report</title>
+<style>
+body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 32px auto; max-width: 1100px; line-height: 1.5; color: #1f2937; padding: 0 20px; }
+h1, h2 { color: #111827; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0 24px; font-size: 14px; }
+th, td { border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; vertical-align: top; }
+th { background: #f3f4f6; }
+.note { background: #f9fafb; border-left: 4px solid #60a5fa; padding: 12px 16px; margin: 16px 0; }
+.figure { margin: 20px 0 28px; }
+.figure img { max-width: 100%; height: auto; border: 1px solid #e5e7eb; border-radius: 8px; }
+.muted { color: #6b7280; }
+</style>
+</head>
+<body>
+<h1>Paired Boarding Strategy Report</h1>
+<p class='muted'>Generated: 2026-04-15 10:28 UTC</p>
+<h2>Study Design</h2>
+<ul>
+<li>Independent variable: boarding strategy</li>
+<li>Primary dependent variable: total boarding time</li>
+<li>Strategies: back-to-front zonal vs modified reverse pyramid</li>
+<li>aircraft layout and cabin topology</li>
+<li>seat map and class structure</li>
+<li>load factor</li>
+<li>luggage probability</li>
+<li>active boarding doors</li>
+<li>behavioral parameter settings</li>
+<li>simulation logic and completion condition</li>
+</ul>
+<h2>Run Summary</h2>
+<table><tr><th>replications</th><th>master_seed</th><th>load_factor</th><th>luggage_probability</th><th>cross_zone_violation_rate</th><th>paired_runs</th><th>completed_pairs</th><th>failed_runs</th></tr><tr><td>158</td><td>2.026e+07</td><td>0.85</td><td>0.75</td><td>0.05</td><td>158</td><td>158</td><td>0</td></tr></table>
+<h2>Descriptive Statistics</h2>
+<table><tr><th>strategy</th><th>n_completed</th><th>mean</th><th>std</th><th>median</th><th>min</th><th>q10</th><th>q25</th><th>q75</th><th>q90</th><th>max</th></tr><tr><td>pyramid</td><td>158</td><td>509.294</td><td>41.653</td><td>507.75</td><td>420.5</td><td>452.4</td><td>479</td><td>535.5</td><td>566.1</td><td>626</td></tr><tr><td>std</td><td>158</td><td>738.475</td><td>60.879</td><td>735.75</td><td>582.5</td><td>662.85</td><td>695.625</td><td>774.75</td><td>817.75</td><td>933</td></tr></table>
+<h2>Paired Inference</h2>
+<table><tr><th>n_pairs</th><th>mean_paired_difference</th><th>mean_relative_improvement</th><th>normality_p_value</th><th>selected_test</th><th>test_statistic</th><th>p_value</th><th>effect_size_vargha_delaney_A</th><th>effect_size_paired_d</th><th>ci95_low</th><th>ci95_high</th></tr><tr><td>158</td><td>229.18</td><td>0.307</td><td></td><td>one-sided paired t-test (zonal - pyramid &gt; 0)</td><td>45.291</td><td>2.447e-92</td><td>1</td><td>3.603</td><td>219.185</td><td>239.175</td></tr></table>
+<h2>Paired Metrics</h2>
+<table><tr><th>replication_id</th><th>boarding_time_zonal</th><th>boarding_time_pyramid</th><th>difference</th><th>ratio</th><th>relative_improvement</th></tr><tr><td>1</td><td>768</td><td>486</td><td>282</td><td>0.633</td><td>0.367</td></tr><tr><td>2</td><td>843.5</td><td>545.5</td><td>298</td><td>0.647</td><td>0.353</td></tr><tr><td>3</td><td>791.5</td><td>544.5</td><td>247</td><td>0.688</td><td>0.312</td></tr><tr><td>4</td><td>844</td><td>509.5</td><td>334.5</td><td>0.604</td><td>0.396</td></tr><tr><td>5</td><td>735</td><td>548</td><td>187</td><td>0.746</td><td>0.254</td></tr><tr><td>6</td><td>696</td><td>565.5</td><td>130.5</td><td>0.812</td><td>0.188</td></tr><tr><td>7</td><td>717.5</td><td>467.5</td><td>250</td><td>0.652</td><td>0.348</td></tr><tr><td>8</td><td>858.5</td><td>503.5</td><td>355</td><td>0.586</td><td>0.414</td></tr><tr><td>9</td><td>651</td><td>496.5</td><td>154.5</td><td>0.763</td><td>0.237</td></tr><tr><td>10</td><td>770.5</td><td>626</td><td>144.5</td><td>0.812</td><td>0.188</td></tr><tr><td>11</td><td>795.5</td><td>535.5</td><td>260</td><td>0.673</td><td>0.327</td></tr><tr><td>12</td><td>726.5</td><td>545</td><td>181.5</td><td>0.75</td><td>0.25</td></tr></table>
+<h2>Figures</h2>
+<div class='figure'>
+<h3>Boarding time by strategy</h3>
+<img src='fig_boxplot_boarding_time.png' alt='Boarding time by strategy'>
+</div>
+<div class='figure'>
+<h3>Histogram of paired differences with fitted normal density</h3>
+<img src='fig_hist_paired_differences.png' alt='Histogram of paired differences with fitted normal density'>
+</div>
+<div class='figure'>
+<h3>Q-Q plot of paired differences</h3>
+<img src='fig_qq_paired_differences.png' alt='Q-Q plot of paired differences'>
+</div>
+<h2>Figure Explanations</h2>
+<div class='note'>
+<h3>Boarding time by strategy</h3>
+<ul>
+<li>What it shows: distribution of total boarding times per strategy (median, spread, and outliers).</li>
+<li>How to read it: lower boxes/medians mean faster boarding; narrower spread means more consistency.</li>
+<li>Conclusion: compare central tendency and spread to assess speed and reliability tradeoffs.</li>
+</ul>
+<h3>Histogram of paired differences with fitted normal density</h3>
+<ul>
+<li>What it shows: frequency distribution of paired differences (zonal - pyramid) with a fitted normal curve overlay.</li>
+<li>How to read it: values above 0 indicate pyramid is faster; the red curve is a visual normal-reference guide.</li>
+<li>Conclusion: center and spread indicate average gain and variability; compare bars vs curve for rough normality fit.</li>
+</ul>
+<h3>Q-Q plot of paired differences</h3>
+<ul>
+<li>What it shows: observed quantiles of paired differences against theoretical normal quantiles.</li>
+<li>How to read it: points close to a straight line suggest approximate normality; systematic bends indicate departures.</li>
+<li>Conclusion: supports whether the paired t-test normality assumption is reasonable.</li>
+</ul>
+</div>
+<h2>Notes</h2>
+<div class='note'>
+<div>Selected test: one-sided paired t-test (zonal - pyramid &gt; 0), p-value: 2.447e-92, mean paired difference: 229.18 s.</div>
+<div>Best mean boarding time: pyramid at 509.294 s.</div>
+<div>Completed pairs: 158.</div>
+<div>Failed runs: 0.</div>
+</div>
+</body>
+</html>

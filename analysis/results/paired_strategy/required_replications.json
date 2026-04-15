@@ -1,8 +1,9 @@
 {
-  "required_replications": 203,
-  "completed_pairs": 203,
+  "required_replications": 158,
+  "replications_attempted": 158,
+  "completed_pairs": 158,
   "target_ci_half_width_s": 10.0,
-  "achieved_ci_half_width_s": 9.955272716703163,
+  "achieved_ci_half_width_s": 9.99490333771116,
   "ci_level": 0.95,
   "min_replications": 30,
   "max_replications": 500,

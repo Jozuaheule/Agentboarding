@@ -17,14 +17,14 @@ CALIBRATION_N_MANIFESTS = 30
 # Luggage stow model defaults (seconds).
 STOW_DIST = "weibull"
 STOW_SHAPE = 1.7
-STOW_SCALE_S = 16.0
+STOW_SCALE_S = 14.0
 STOW_UNIFORM_LOW_S = 15.0
 STOW_UNIFORM_HIGH_S = 45.0
 
 # Seat-shuffle delay defaults (seconds).
 SHUFFLE_MODEL = "triangular"
 SHUFFLE_LOW_S = 15.0
-SHUFFLE_MODE_S = 20.5
+SHUFFLE_MODE_S = 20.0
 SHUFFLE_HIGH_S = 26.0
 
 # Initial sweep grid (stow x shuffle settings).

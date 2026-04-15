@@ -14,10 +14,8 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "analysis" / "results" / "paired_strategy"
 
 FIGURE_FILES = [
     ("fig_boxplot_boarding_time.png", "Boarding time by strategy"),
-    ("fig_hist_paired_differences.png", "Histogram of paired differences"),
+    ("fig_hist_paired_differences.png", "Histogram of paired differences with fitted normal density"),
     ("fig_qq_paired_differences.png", "Q-Q plot of paired differences"),
-    ("fig_relative_improvement_by_replication.png", "Relative improvement by replication"),
-    ("fig_ci_cv_stabilization.png", "CI and CV stabilization across completed pairs"),
 ]
 
 
@@ -103,6 +101,54 @@ def _build_summary_notes(inputs: dict) -> List[str]:
     return notes
 
 
+def _build_figure_explanations_markdown() -> List[str]:
+    return [
+        "### Boarding time by strategy",
+        "- What it shows: distribution of total boarding times per strategy (median, spread, and outliers).",
+        "- How to read it: lower boxes/medians mean faster boarding; narrower spread means more consistency.",
+        "- Conclusion: compare central tendency and spread to assess speed and reliability tradeoffs.",
+        "",
+        "### Histogram of paired differences with fitted normal density",
+        "- What it shows: frequency distribution of paired differences (zonal - pyramid) with a fitted normal curve overlay.",
+        "- How to read it: values above 0 indicate pyramid is faster; the red curve is a visual normal-reference guide.",
+        "- Conclusion: center and spread indicate average gain and variability; compare bars vs curve for rough normality fit.",
+        "",
+        "### Q-Q plot of paired differences",
+        "- What it shows: observed quantiles of paired differences against theoretical normal quantiles.",
+        "- How to read it: points close to a straight line suggest approximate normality; systematic bends indicate departures.",
+        "- Conclusion: supports whether the paired t-test normality assumption is reasonable.",
+        "",
+    ]
+
+
+def _build_figure_explanations_html() -> str:
+    return "\n".join(
+        [
+            "<h2>Figure Explanations</h2>",
+            "<div class='note'>",
+            "<h3>Boarding time by strategy</h3>",
+            "<ul>",
+            "<li>What it shows: distribution of total boarding times per strategy (median, spread, and outliers).</li>",
+            "<li>How to read it: lower boxes/medians mean faster boarding; narrower spread means more consistency.</li>",
+            "<li>Conclusion: compare central tendency and spread to assess speed and reliability tradeoffs.</li>",
+            "</ul>",
+            "<h3>Histogram of paired differences with fitted normal density</h3>",
+            "<ul>",
+            "<li>What it shows: frequency distribution of paired differences (zonal - pyramid) with a fitted normal curve overlay.</li>",
+            "<li>How to read it: values above 0 indicate pyramid is faster; the red curve is a visual normal-reference guide.</li>",
+            "<li>Conclusion: center and spread indicate average gain and variability; compare bars vs curve for rough normality fit.</li>",
+            "</ul>",
+            "<h3>Q-Q plot of paired differences</h3>",
+            "<ul>",
+            "<li>What it shows: observed quantiles of paired differences against theoretical normal quantiles.</li>",
+            "<li>How to read it: points close to a straight line suggest approximate normality; systematic bends indicate departures.</li>",
+            "<li>Conclusion: supports whether the paired t-test normality assumption is reasonable.</li>",
+            "</ul>",
+            "</div>",
+        ]
+    )
+
+
 def generate_markdown_report(output_dir: Path) -> str:
     inputs = _load_report_inputs(output_dir)
     config = inputs["config"]
@@ -167,6 +213,8 @@ def generate_markdown_report(output_dir: Path) -> str:
         if figure_path.exists():
             md.append(f"![{caption}]({filename})")
             md.append("")
+
+    md.extend(_build_figure_explanations_markdown())
 
     md.append("## Notes")
     for note in _build_summary_notes(inputs):
@@ -250,6 +298,8 @@ def generate_html_report(output_dir: Path) -> str:
                 f"<img src='{html.escape(filename)}' alt='{html.escape(caption)}'>",
                 "</div>",
             ])
+
+    html_parts.append(_build_figure_explanations_html())
 
     html_parts.append("<h2>Notes</h2>")
     html_parts.append("<div class='note'>")

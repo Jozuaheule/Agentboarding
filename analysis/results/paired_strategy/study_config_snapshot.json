@@ -1,5 +1,5 @@
 {
-  "replications": 203,
+  "replications": 158,
   "master_seed": 20260413,
   "batch_size": 10,
   "policy_a": "std",
@@ -11,7 +11,7 @@
   "stow_config": {
     "dist": "weibull",
     "shape_k": 1.7,
-    "scale_lambda_s": 16.0,
+    "scale_lambda_s": 14.0,
     "low_s": 15.0,
     "high_s": 45.0
   },
@@ -19,7 +19,7 @@
     "model": "triangular",
     "low_s": 15.0,
     "high_s": 26.0,
-    "mode_s": 20.5
+    "mode_s": 20.0
   },
   "study_context": {
     "fixed_assumptions": [

@@ -1,0 +1,2 @@
+n_pairs,mean_paired_difference,mean_relative_improvement,normality_p_value,selected_test,test_statistic,p_value,effect_size_vargha_delaney_A,effect_size_paired_d,ci95_low,ci95_high
+158,229.18037974683546,0.30696203485721063,,one-sided paired t-test (zonal - pyramid > 0),45.29054330698412,2.4471939740819395e-92,1.0,3.603122163214757,219.1854764091243,239.1752830845466

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
@@ -12,14 +11,6 @@ from scipy import stats
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "analysis" / "results" / "paired_strategy"
-
-
-@dataclass(frozen=True)
-class StudyConfig:
-    ci_level: float = 0.95
-
-
-DEFAULT_STUDY_CONFIG = StudyConfig()
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -69,7 +60,7 @@ def compute_paired_ttest_summary(pairs_df: pd.DataFrame) -> pd.DataFrame:
                     "mean_paired_difference": float("nan"),
                     "mean_relative_improvement": float("nan"),
                     "normality_p_value": float("nan"),
-                    "selected_test": "paired_t",
+                    "selected_test": "one-sided paired t-test (zonal - pyramid > 0)",
                     "test_statistic": float("nan"),
                     "p_value": float("nan"),
                     "effect_size_vargha_delaney_A": float("nan"),
@@ -84,7 +75,7 @@ def compute_paired_ttest_summary(pairs_df: pd.DataFrame) -> pd.DataFrame:
     pyramid = valid["boarding_time_pyramid"].to_numpy(dtype=float)
     differences = valid["difference"].to_numpy(dtype=float)
 
-    test_result = stats.ttest_rel(zonal, pyramid, alternative="two-sided")
+    test_result = stats.ttest_rel(zonal, pyramid, alternative="greater")
     mean_diff = float(np.mean(differences))
     std_diff = float(np.std(differences, ddof=1))
     paired_d = mean_diff / std_diff if std_diff != 0 else float("nan")
@@ -99,7 +90,7 @@ def compute_paired_ttest_summary(pairs_df: pd.DataFrame) -> pd.DataFrame:
                 "mean_paired_difference": mean_diff,
                 "mean_relative_improvement": float(np.mean(valid["relative_improvement"])),
                 "normality_p_value": float("nan"),
-                "selected_test": "paired_t",
+                "selected_test": "one-sided paired t-test (zonal - pyramid > 0)",
                 "test_statistic": float(test_result.statistic),
                 "p_value": float(test_result.pvalue),
                 "effect_size_vargha_delaney_A": float(vargha_delaney_a_from_differences(differences)),
@@ -134,10 +125,22 @@ def plot_outputs(runs_df: pd.DataFrame, pairs_df: pd.DataFrame, output_dir: Path
         differences = valid_pairs["difference"].to_numpy(dtype=float)
 
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.hist(differences, bins=20, edgecolor="black", alpha=0.8)
+        ax.hist(differences, bins=20, density=True, edgecolor="black", alpha=0.65, label="Paired differences")
+
+        if len(differences) >= 2:
+            mean = float(np.mean(differences))
+            sd = float(np.std(differences, ddof=1))
+            if np.isfinite(sd) and sd > 0:
+                x_min = float(np.min(differences))
+                x_max = float(np.max(differences))
+                x = np.linspace(x_min, x_max, 300)
+                y = stats.norm.pdf(x, loc=mean, scale=sd)
+                ax.plot(x, y, color="#dc2626", linewidth=2, label="Fitted normal density")
+
         ax.set_title("Histogram of Paired Differences (zonal - pyramid)")
         ax.set_xlabel("Difference in total boarding time (s)")
-        ax.set_ylabel("Frequency")
+        ax.set_ylabel("Density")
+        ax.legend(loc="best")
         ax.grid(axis="y", linestyle="--", alpha=0.4)
         fig.tight_layout()
         fig.savefig(output_dir / "fig_hist_paired_differences.png", dpi=160)
@@ -152,89 +155,12 @@ def plot_outputs(runs_df: pd.DataFrame, pairs_df: pd.DataFrame, output_dir: Path
             fig.savefig(output_dir / "fig_qq_paired_differences.png", dpi=160)
             plt.close(fig)
 
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(valid_pairs["replication_id"], valid_pairs["relative_improvement"], marker="o", linestyle="-")
-        ax.axhline(0.0, color="red", linestyle="--", linewidth=1)
-        ax.set_title("Relative Improvement by Replication")
-        ax.set_xlabel("Replication id")
-        ax.set_ylabel("Relative improvement")
-        ax.grid(True, linestyle="--", alpha=0.4)
-        fig.tight_layout()
-        fig.savefig(output_dir / "fig_relative_improvement_by_replication.png", dpi=160)
-        plt.close(fig)
-
-
-def build_stabilization_df(pairs_df: pd.DataFrame, ci_level: float) -> pd.DataFrame:
-    valid = pairs_df[pairs_df["pair_completed"].astype(bool)].sort_values("replication_id")
-    diffs = valid["difference"].to_numpy(dtype=float)
-
-    rows: List[dict] = []
-    running: List[float] = []
-    alpha = 1.0 - ci_level
-
-    for idx, diff in enumerate(diffs, start=1):
-        running.append(float(diff))
-        if len(running) < 2:
-            rows.append(
-                {
-                    "n_completed_pairs": idx,
-                    "running_mean_diff": float(np.mean(running)),
-                    "running_cv": float("nan"),
-                    "running_ci_half_width": float("nan"),
-                }
-            )
-            continue
-
-        arr = np.array(running, dtype=float)
-        mean = float(np.mean(arr))
-        sd = float(np.std(arr, ddof=1))
-        se = sd / np.sqrt(len(arr))
-        t_crit = float(stats.t.ppf(1.0 - alpha / 2.0, df=len(arr) - 1))
-        ci_half = t_crit * se
-        cv = sd / abs(mean) if mean != 0 else float("nan")
-
-        rows.append(
-            {
-                "n_completed_pairs": idx,
-                "running_mean_diff": mean,
-                "running_cv": cv,
-                "running_ci_half_width": ci_half,
-            }
-        )
-
-    return pd.DataFrame(rows)
-
-
-def plot_ci_cv_stabilization(stab_df: pd.DataFrame, output_dir: Path) -> None:
-    if stab_df.empty:
-        return
-
-    fig, ax1 = plt.subplots(figsize=(10, 5))
-    x = stab_df["n_completed_pairs"].to_numpy(dtype=float)
-
-    ax1.plot(x, stab_df["running_ci_half_width"], color="#1d4ed8", linewidth=2, label="CI half-width")
-    ax1.set_xlabel("Completed pairs")
-    ax1.set_ylabel("CI half-width (s)", color="#1d4ed8")
-    ax1.tick_params(axis="y", labelcolor="#1d4ed8")
-    ax1.grid(True, linestyle="--", alpha=0.35)
-
-    ax2 = ax1.twinx()
-    ax2.plot(x, stab_df["running_cv"], color="#b91c1c", linewidth=2, label="CV")
-    ax2.set_ylabel("Coefficient of variation", color="#b91c1c")
-    ax2.tick_params(axis="y", labelcolor="#b91c1c")
-
-    fig.suptitle("CI and CV Stabilization Across Completed Pairs")
-    fig.tight_layout()
-    fig.savefig(output_dir / "fig_ci_cv_stabilization.png", dpi=160)
-    plt.close(fig)
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Step 2: build statistical summaries and plots from step-1 outputs."
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--ci-level", type=float, default=DEFAULT_STUDY_CONFIG.ci_level)
     args = parser.parse_args()
 
     output_dir = args.output_dir
@@ -256,16 +182,11 @@ def main() -> None:
     inferential_df = compute_paired_ttest_summary(pairs_df)
     inferential_df.to_csv(output_dir / "paired_inferential_summary.csv", index=False)
 
-    stability_df = build_stabilization_df(pairs_df, ci_level=args.ci_level)
-    stability_df.to_csv(output_dir / "replication_stability_summary.csv", index=False)
-
     plot_outputs(runs_df, pairs_df, output_dir)
-    plot_ci_cv_stabilization(stability_df, output_dir)
 
     print("Step 2 complete: analysis outputs and plots generated.")
     print(f"Descriptive rows: {len(descriptive_df)}")
     print(f"Inferential rows: {len(inferential_df)}")
-    print(f"Stability rows: {len(stability_df)}")
 
 
 if __name__ == "__main__":
