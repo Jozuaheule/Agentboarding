@@ -203,7 +203,6 @@ def run_calibration() -> None:
                     "avg_wait_seconds": metrics["avg_wait_seconds"],
                     "luggage_passengers": int(metrics["luggage_passengers"]),
                     "avg_assigned_stow_seconds": metrics["avg_stow_seconds"],
-                    "head_on_count": int(metrics["head_on_count"]),
                     "row_conflict_count": int(metrics["row_conflict_count"]),
                     "seat_shuffle_starts": int(metrics["seat_shuffle_starts"]),
                     "seat_shuffle_finishes": int(metrics["seat_shuffle_finishes"]),

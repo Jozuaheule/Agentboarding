@@ -1,6 +1,6 @@
 """Completion-level verification experiments.
 
-V11 checks single-run completion correctness and V12 checks repeated-run invariants.
+V10 checks single-run completion correctness and V11 checks repeated-run invariants.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ except ModuleNotFoundError:
 
 
 def run_completion_verification() -> list[dict]:
-    """Run completion experiments (V11, V12) and return PASS/FAIL records."""
+    """Run completion experiments (V10, V11) and return PASS/FAIL records."""
     results: list[dict] = []
 
     try:
@@ -52,7 +52,7 @@ def run_completion_verification() -> list[dict]:
 
         results.append(
             pass_result_with_meta(
-                "V11",
+                "V10",
                 "Completion-condition and final-state consistency",
                 details,
                 metadata={"kpis": {"event_counters": dict(sim.event_counters)}},
@@ -61,7 +61,7 @@ def run_completion_verification() -> list[dict]:
     except Exception as exc:
         results.append(
             fail_result(
-                "V11",
+                "V10",
                 "Completion-condition and final-state consistency",
                 [f"Exception: {exc}"],
             )
@@ -93,14 +93,10 @@ def run_completion_verification() -> list[dict]:
             row["event_counters"].get("row_conflict_events", 0)
             for row in per_seed_kpis
         ) / max(len(per_seed_kpis), 1)
-        avg_head_on = sum(
-            row["event_counters"].get("head_on_events", 0)
-            for row in per_seed_kpis
-        ) / max(len(per_seed_kpis), 1)
 
         results.append(
             pass_result_with_meta(
-                "V12",
+                "V11",
                 "Repeated-run completion invariants",
                 details,
                 metadata={
@@ -108,7 +104,6 @@ def run_completion_verification() -> list[dict]:
                         "per_seed": per_seed_kpis,
                         "averages": {
                             "row_conflict_events": avg_row_conflicts,
-                            "head_on_events": avg_head_on,
                         },
                     }
                 },
@@ -117,7 +112,7 @@ def run_completion_verification() -> list[dict]:
     except Exception as exc:
         results.append(
             fail_result_with_meta(
-                "V12",
+                "V11",
                 "Repeated-run completion invariants",
                 [f"Exception: {exc}"],
                 metadata={"kpis": {"per_seed": per_seed_kpis if 'per_seed_kpis' in locals() else []}},

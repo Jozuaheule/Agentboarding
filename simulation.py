@@ -5,10 +5,10 @@ Fully aligned with the formal predicate model in ABMS_G20_Report-5.pdf (Ch. 3).
 
 Implemented formal properties:
   IC1-IC6  Initial conditions
-  B1-B9    Belief-state evolution
+    B1-B6    Belief-state evolution
   O1-O6    Observation-based state characterisation
-  I1-I5    Intention selection
-  A1-A17   Action generation
+    I1-I3/I5 Intention selection
+    A1-A10/A17 Action generation
   C1       System-level completion condition
 """
 
@@ -185,10 +185,6 @@ class PassengerAgent:
         seat_x: int,
         seat_y: int,
         travel_class: str = "economy",
-        preferred_speed: int = 1,
-        lateral_speed: int = 1,
-        patience_threshold: int = 15,
-        compliance_level: float = 0.8,
         has_luggage: bool = False,
         stow_duration: int = 0,
         shuffle_model: str = SHUFFLE_MODEL,
@@ -200,7 +196,6 @@ class PassengerAgent:
             else None
         ),
         zone_std: int = 1,
-        zone_outsidein: int = 1,
         zone_pyramid: int = 1,
     ) -> None:
         # === Staticp (time-invariant, Section 3.3.1) ===
@@ -212,10 +207,6 @@ class PassengerAgent:
         self.seat_x = seat_x                        # xs
         self.seat_y = seat_y                        # ys
         self.travel_class = travel_class            # classp
-        self.preferred_speed = preferred_speed      # preferredSpeedp
-        self.lateral_speed = lateral_speed          # lateralSpeedp
-        self.patience_threshold = patience_threshold  # patienceThresholdp
-        self.compliance_level = compliance_level    # complianceLevelp
         self.has_luggage = has_luggage              # hasLuggagep
         self.stow_duration = stow_duration          # stowDurationp
         self.shuffle_model = shuffle_model
@@ -227,7 +218,6 @@ class PassengerAgent:
             else min(self.shuffle_high_ticks, max(self.shuffle_low_ticks, int(shuffle_mode_ticks)))
         )
         self.zone_std = zone_std                    # zoneSTDp
-        self.zone_outsidein = zone_outsidein        # zoneOutsideInp
         self.zone_pyramid = zone_pyramid            # zonePyramidp
 
         # === Internalp – Beliefs ===
@@ -241,21 +231,15 @@ class PassengerAgent:
         self.time_since_move: int = 0               # believes(p, timeSinceMove) [IC4]
 
         # Per-tick beliefs (reset each tick during evaluate_intent)
-        self.head_on_conflict: bool = False         # believes(p, headOnConflict) [B7]
-        self.opponent_has_priority: bool = False    # believes(p, opponentHasPriority) [B8]
         self.row_blocker: bool = False              # believes(p, rowBlocker)     [B4]
         self.row_blocked: bool = False              # believes(p, rowBlocked)     [B5]
         self.row_shift_complete: bool = False       # believes(p, rowShiftComplete) [B6]
 
-        # Persistent head-on state: tracks time-since-yield and opponent
-        self._yielding_since: int = 0               # ticks spent in refuge
-        self._yield_opponent_id: Optional[str] = None
-
         # === Internalp – Intentions ===                               [IC5]
-        self.intent: str = "none"
+        self.intent: str = "wait"
 
         # === Outputp – Actions ===                                    [IC6]
-        self.last_action: str = "none"
+        self.last_action: str = "wait"
 
         # === Bookkeeping ===
         self.spawned: bool = False
@@ -480,7 +464,7 @@ class PassengerAgent:
         )
 
     # ===================================================================
-    #  Phase A:  INTENTION EVALUATION   (Properties I1–I5, B4-B9)
+    #  Phase A:  INTENTION EVALUATION   (Properties I1-I3/I5, B4-B6)
     # ===================================================================
     def evaluate_intent(
         self,
@@ -492,19 +476,17 @@ class PassengerAgent:
     ) -> None:
         """Evaluate observations → beliefs → intention."""
         if not self.spawned or self.position is None:
-            self.intent = "none"
+            self.intent = "wait"
             return
 
         # R0: seated → terminal
         if self.seated:
-            self.intent = "none"
+            self.intent = "wait"
             return
 
         cur = self.position
 
         # Reset per-tick beliefs
-        self.head_on_conflict = False
-        self.opponent_has_priority = False
         self.row_blocker = False
         self.row_blocked = False
         self.row_shift_complete = False
@@ -543,13 +525,10 @@ class PassengerAgent:
                 return
 
         # =================================================================
-        #  Return-to-aisle: in a non-target seat (e.g. from yielding)
+        #  Return-to-aisle: in a non-target seat
         # =================================================================
         if (env.node_type(cur) == "seat"
                 and cur != self.assigned_seat_node):
-            # Clear yield memory if present
-            self._yield_opponent_id = None
-            self._yielding_since = 0
             # Try to return to aisle
             aisle_n = self._any_free_aisle_neighbor(env, occupied)
             if aisle_n is not None:
@@ -558,95 +537,6 @@ class PassengerAgent:
             # No free aisle neighbor → wait
             self.intent = "wait"
             return
-
-        # =================================================================
-        #  B9:  Still yielding from a previous head-on?
-        # =================================================================
-        if self._yield_opponent_id is not None and env.node_type(cur) == "seat":
-            opp = all_agents.get(self._yield_opponent_id)
-            if opp is not None and opp.position is not None:
-                # Check if opponent has passed (B9): opponent no longer within
-                # K_OBS hops or has moved past my x-coordinate
-                h = env.hop_distance(cur, opp.position)
-                opp_x = env.node_x(opp.position)
-                my_x = env.node_x(cur)
-                opp_dir = opp._dir(env)
-                still_nearby = (h <= K_OBS and not opp.seated)
-                still_blocking = False
-                if still_nearby:
-                    # Opponent hasn't passed if they're still at or behind my position
-                    if (opp_dir > 0 and opp_x < my_x) or \
-                       (opp_dir < 0 and opp_x > my_x):
-                        still_blocking = True
-                    elif opp_x == my_x:
-                        still_blocking = True
-
-                if still_blocking:
-                    self._yielding_since += 1
-                    # Safety valve: don't yield forever (max 10 ticks)
-                    if self._yielding_since < 10:
-                        self.head_on_conflict = True
-                        self.opponent_has_priority = True
-                        self.intent = "resolveHeadOn"
-                        return
-
-            # Opponent passed or gone → clear yield state
-            self._yield_opponent_id = None
-            self._yielding_since = 0
-            # Return to aisle: treated as advance
-            adv = self._best_aisle_advance(env, occupied)
-            if adv is not None:
-                self.intent = "advance"
-                return
-
-        # =================================================================
-        #  B7/B8:  Fresh head-on detection (aisle, opposite direction, ≤ K_OBS)
-        # =================================================================
-        my_dir = self._dir(env)
-        if my_dir != 0 and env.node_type(cur) == "aisle":
-            for n in env.neighbors(cur):
-                if n not in agent_at:
-                    continue
-                if env.node_type(n) != "aisle":
-                    continue
-                if env.hop_distance(cur, n) > K_OBS:
-                    continue
-                q = agent_at[n]
-                q_dir = q._dir(env)
-                if q_dir != 0 and q_dir == -my_dir:
-                    # B7: head-on detected
-                    # B8: priority assignment
-                    p_yields = False
-                    if (not self.has_luggage) and q.has_luggage:
-                        p_yields = True
-                    elif self.has_luggage and not q.has_luggage:
-                        p_yields = False
-                    elif self.has_luggage == q.has_luggage:
-                        my_mid = abs(self.seat_x - env.x_mid)
-                        q_mid = abs(q.seat_x - env.x_mid)
-                        if my_mid > q_mid:
-                            p_yields = True
-                        elif my_mid == q_mid:
-                            p_yields = int(self.pax_id) > int(q.pax_id)
-
-                    # Safety: skip head-on if priority side can't advance
-                    # (prevents permanent conflict stall)
-                    if p_yields:
-                        # I would yield — check if opponent (priority) can advance
-                        q_occ = occupied - {n}  # q's position excluded
-                        q_adv = q._best_aisle_advance(env, q_occ)
-                        if q_adv is None:
-                            continue  # opponent stuck, no point yielding
-                    else:
-                        # I have priority — check if I can actually advance
-                        adv = self._best_aisle_advance(env, occupied)
-                        if adv is None:
-                            continue  # can't advance, skip head-on
-
-                    self.head_on_conflict = True
-                    self.opponent_has_priority = p_yields
-                    self.intent = "resolveHeadOn"
-                    return
 
         # =================================================================
         #  B5 / I2:  Row-blocked (at aisle-access, ready, path occupied)
@@ -731,7 +621,7 @@ class PassengerAgent:
     ) -> str:
         """Translate intent into physical state change."""
         if not self.spawned or self.position is None:
-            return "none"
+            return "wait"
 
         cur = self.position
 
@@ -788,49 +678,6 @@ class PassengerAgent:
             self.time_since_move += 1
             return "wait"
 
-        # ---- A11-A16: head-on conflict resolution ----
-        if self.intent == "resolveHeadOn":
-            if not self.opponent_has_priority:
-                # A11: I have priority → advance if possible
-                target = self._best_aisle_advance(env, occupied)
-                if target is not None and target not in next_positions.values():
-                    next_positions[self.pax_id] = target
-                    self.position = target
-                    self.time_since_move = 0
-                    return f"moveTo:{target}"
-                # A12: priority wait
-                next_positions[self.pax_id] = cur
-                self.time_since_move += 1
-                return "wait"
-            else:
-                # A13: yield → move into adjacent free seat (refuge)
-                if env.node_type(cur) == "aisle":
-                    for n in env.neighbors(cur):
-                        if n in occupied or n in next_positions.values():
-                            continue
-                        if env.node_type(n) == "seat":
-                            next_positions[self.pax_id] = n
-                            self.position = n
-                            self.time_since_move = 0
-                            # Track yield state for B9
-                            # Find the opponent
-                            for nb in env.neighbors(cur):
-                                if nb in agent_at and nb != n:
-                                    q = agent_at[nb]
-                                    if q._dir(env) == -self._dir(env):
-                                        self._yield_opponent_id = q.pax_id
-                                        self._yielding_since = 0
-                                        break
-                            return f"yield:{n}"
-                    # A16: no free seat → wait
-                    next_positions[self.pax_id] = cur
-                    self.time_since_move += 1
-                    return "wait"
-                # A14: already in refuge seat → wait
-                next_positions[self.pax_id] = cur
-                self.time_since_move += 1
-                return "wait"
-
         # ---- A7-A10/A15: seat-block resolution ----
         if self.intent == "resolveSeatBlock":
             if self.row_blocker:
@@ -838,7 +685,7 @@ class PassengerAgent:
                 # The burden of the delay is carried mathematically by the incoming passenger.
                 next_positions[self.pax_id] = cur
                 self.time_since_move += 1
-                return "waitBlocker"
+                return "wait"
 
             elif self.row_blocked:
                 # Time Penalty Execution
@@ -885,13 +732,6 @@ class PassengerAgent:
             self.time_since_move += 1
             return "wait"
 
-        # ---- A17: aisle switch — DISABLED (passengers stick to assigned aisle)
-        if self.intent == "switchAisle":
-            # Should not be reached; fall through to wait
-            next_positions[self.pax_id] = cur
-            self.time_since_move += 1
-            return "wait"
-
         # ---- A6: default wait ----
         next_positions[self.pax_id] = cur
         self.time_since_move += 1
@@ -919,6 +759,12 @@ class BoardingSimulation:
         self.tick = 0
         self.occupied: Set[str] = set()
         self.boarding_policy = boarding_policy
+        allowed_policies = {"random", "std", "pyramid"}
+        if self.boarding_policy not in allowed_policies:
+            raise ValueError(
+                f"Unsupported boarding_policy '{self.boarding_policy}'. "
+                f"Supported values: {sorted(allowed_policies)}"
+            )
         rate = float(cross_zone_violation_rate)
         if not 0.0 <= rate <= 1.0:
             raise ValueError(
@@ -939,13 +785,11 @@ class BoardingSimulation:
             "moves": 0,
             "waits": 0,
             "seated": 0,
-            "head_on_events": 0,
             "row_conflict_events": 0,
             "stow_start": 0,
             "stow_complete": 0,
             "seat_shuffle_start": 0,
             "seat_shuffle_finish": 0,
-            "yield_actions": 0,
         }
 
         df = self._load_manifest_dataframe(manifest_file)
@@ -956,9 +800,6 @@ class BoardingSimulation:
         elif self.boarding_policy == "std":
             df = df.sort_values(by="zone_std", ascending=True)
             df = df.groupby(["zone_std"], group_keys=False).apply(lambda x: x.sample(frac=1, random_state=seed)).reset_index(drop=True)
-        elif self.boarding_policy == "wilma":
-            df = df.sort_values(by="zone_outsidein", ascending=True)
-            df = df.groupby(["zone_outsidein"], group_keys=False).apply(lambda x: x.sample(frac=1, random_state=seed)).reset_index(drop=True)
         elif self.boarding_policy == "pyramid":
             df = df.sort_values(by="zone_pyramid", ascending=True)
             df = df.groupby(["zone_pyramid"], group_keys=False).apply(lambda x: x.sample(frac=1, random_state=seed)).reset_index(drop=True)
@@ -995,10 +836,6 @@ class BoardingSimulation:
                 seat_x=int(row["x_coord"]),
                 seat_y=int(row["y_coord"]),
                 travel_class=str(row.get("class", "economy")),
-                preferred_speed=int(row.get("preferred_speed", 1)),
-                lateral_speed=int(row.get("lateral_speed", 1)),
-                patience_threshold=int(row.get("patience_threshold", 15)),
-                compliance_level=0.95,
                 has_luggage=has_lug,
                 stow_duration=stow_dur,
                 shuffle_model=self.shuffle_config.model,
@@ -1006,7 +843,6 @@ class BoardingSimulation:
                 shuffle_high_ticks=self.shuffle_high_ticks,
                 shuffle_mode_ticks=self.shuffle_mode_ticks,
                 zone_std=int(row.get("zone_std", 1)),
-                zone_outsidein=int(row.get("zone_outsidein", 1)),
                 zone_pyramid=int(row.get("zone_pyramid", 1)),
             )
             self.agents.append(agent)
@@ -1167,7 +1003,7 @@ class BoardingSimulation:
     def _record_action_metrics(self, action: str, agent: PassengerAgent) -> None:
         if action.startswith("moveTo:"):
             self.event_counters["moves"] += 1
-        elif action in {"wait", "waitBlocker", "shufflingSeat"}:
+        elif action in {"wait", "shufflingSeat"}:
             self.event_counters["waits"] += 1
             agent.wait_count += 1
         elif action == "sit":
@@ -1180,9 +1016,6 @@ class BoardingSimulation:
             self.event_counters["seat_shuffle_start"] += 1
         elif action == "finishShuffle":
             self.event_counters["seat_shuffle_finish"] += 1
-        elif action.startswith("yield:"):
-            self.event_counters["yield_actions"] += 1
-
     def step(self) -> bool:
         """One tick: Observe/Intent → Action/Commit."""
         self.tick += 1
@@ -1205,8 +1038,6 @@ class BoardingSimulation:
             agent.evaluate_intent(
                 self.env, occupied, self.agents_by_id, agent_at, all_agent_at
             )
-            if agent.intent == "resolveHeadOn":
-                self.event_counters["head_on_events"] += 1
             if agent.intent == "resolveSeatBlock":
                 self.event_counters["row_conflict_events"] += 1
 
@@ -1257,7 +1088,6 @@ class BoardingSimulation:
             "luggage_passengers": float(pax_lug),
             "avg_stow_ticks": float(avg_stow),
             "avg_stow_seconds": ticks_to_seconds(avg_stow),
-            "head_on_count": float(self.event_counters["head_on_events"]),
             "row_conflict_count": float(self.event_counters["row_conflict_events"]),
             "seat_shuffle_starts": float(self.event_counters["seat_shuffle_start"]),
             "seat_shuffle_finishes": float(self.event_counters["seat_shuffle_finish"]),

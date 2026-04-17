@@ -37,7 +37,7 @@ def run_initialization_verification() -> list[dict]:
             assert agent.spawned is False
             assert agent.seated is False
             assert agent.position is None
-            assert agent.intent == "none"
+            assert agent.intent == "wait"
             assert agent.time_since_move == 0
 
             if agent.has_luggage:

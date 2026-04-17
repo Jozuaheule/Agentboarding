@@ -3,10 +3,15 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+import sys
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from calibration.calibration_config import (
     CALIBRATION_LOAD_FACTOR,
@@ -80,14 +85,11 @@ OUTPUT_COLUMNS = [
     "preferred_spawn",
     "alternative_spawn",
     "assigned_aisle",
-    "preferred_speed",
-    "lateral_speed",
     "has_luggage",
     "stow_duration",
     "violation_pick_score",
     "violation_insert_score",
     "zone_std",
-    "zone_outsidein",
     "zone_pyramid",
 ]
 
@@ -251,16 +253,6 @@ def get_zone_std(row_number: int) -> int:
     raise ValueError(f"Unsupported row number for zone_std: {row_number}")
 
 
-def get_zone_outsidein(row_number: int, seat_depth_category: str) -> int:
-    if row_number in BUSINESS_ROWS:
-        return 1
-    if seat_depth_category == "maximum":
-        return 2
-    if seat_depth_category == "intermediate":
-        return 3
-    return 4
-
-
 def get_zone_pyramid(row_number: int, seat_letter: str, seat_depth_category: str) -> int:
     if row_number in BUSINESS_ROWS:
         return 1
@@ -365,10 +357,6 @@ def build_seat_map(nodes_df: pd.DataFrame, edges_df: pd.DataFrame) -> pd.DataFra
         axis=1,
     )
     seat_nodes["zone_std"] = seat_nodes["row_number"].map(get_zone_std)
-    seat_nodes["zone_outsidein"] = seat_nodes.apply(
-        lambda row: get_zone_outsidein(int(row["row_number"]), str(row["seat_depth_category"])),
-        axis=1,
-    )
     seat_nodes["zone_pyramid"] = seat_nodes.apply(
         lambda row: get_zone_pyramid(
             int(row["row_number"]),
@@ -476,8 +464,6 @@ def build_manifest(
         rng=rng,
     ).copy()
 
-    manifest_df["preferred_speed"] = rng.choice([2, 4], size=len(manifest_df))
-    manifest_df["lateral_speed"] = 1
     manifest_df["has_luggage"] = rng.random(size=len(manifest_df)) < luggage_probability
     # Precompute deterministic scores used by same-door violation reshuffling.
     manifest_df["violation_pick_score"] = rng.random(size=len(manifest_df))

@@ -12,7 +12,6 @@ try:
     from verification.verification_utils import save_results_json
     from verification.verify_completion import run_completion_verification
     from verification.verify_environment import run_environment_verification
-    from verification.verify_head_on import run_head_on_verification
     from verification.verify_initialization import run_initialization_verification
     from verification.verify_luggage import run_luggage_verification
     from verification.verify_movement import run_movement_verification
@@ -22,7 +21,6 @@ except ModuleNotFoundError:
     from verification_utils import save_results_json
     from verify_completion import run_completion_verification
     from verify_environment import run_environment_verification
-    from verify_head_on import run_head_on_verification
     from verify_initialization import run_initialization_verification
     from verify_luggage import run_luggage_verification
     from verify_movement import run_movement_verification
@@ -38,7 +36,6 @@ def main() -> int:
         run_movement_verification,
         run_luggage_verification,
         run_row_access_verification,
-        run_head_on_verification,
         run_completion_verification,
     ]
 

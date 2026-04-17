@@ -253,15 +253,11 @@ class BoardingVisualiser:
             else:
                 # Add conflict glows based on intent
                 glow_color = None
-                if agent.intent == "resolveHeadOn":
-                    glow_color = (255, 50, 50, 100) # Red glow
-                elif agent.intent == "resolveSeatBlock":
+                if agent.intent == "resolveSeatBlock":
                     if getattr(agent, "seat_shuffle_delay", 0) > 0:
                         glow_color = (255, 255, 50, 150) # Strong Yellow glow targeting penalty
                     else:
                         glow_color = (180, 50, 255, 100) # Purple glow
-                elif agent.intent == "switchAisle":
-                    glow_color = (50, 200, 255, 100) # Cyan glow
                 elif agent.intent == "advance":
                     glow_color = (*base_color, 40)   # Default glow
                 
