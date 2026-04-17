@@ -393,14 +393,12 @@ class PassengerAgent:
             if best is not None:
                 return best
 
-        # --- Fallback (Galley Routing): Off-assigned-aisle ---
-        # Prioritize colCloser to traverse cross-aisles
+        # --- Fallback: allow any non-seat neighbor that improves lateral progress ---
         best, best_d = None, float("inf")
         for n in env.neighbors(self.position):
             if n in occupied or env.node_type(n) == "seat":
                 continue
             
-            # Use pure colCloser property to cross the plane laterally
             if self._col_closer(n, env, target):
                 d = self._manhattan(n, target, env)
                 if d < best_d:
@@ -592,15 +590,6 @@ class PassengerAgent:
         if self._same_aisle_progress(env, occupied):
             self.intent = "advance"
             return
-
-        # =================================================================
-        #  A17:  Aisle switch — REMOVED
-        #  Passengers are directed to their assigned aisle by the
-        #  flight attendant at the door and stick with it.
-        #  Cross-aisle routing is handled by apCloserIfMoveTo in
-        #  _best_aisle_advance when the passenger has not yet
-        #  reached their assigned aisle.
-        # =================================================================
 
         # =================================================================
         #  A6:  Default wait
@@ -965,10 +954,6 @@ class BoardingSimulation:
 
     def _spawn_next(self) -> None:
         """Spawn up to SPAWN_RATE passengers per door per tick.
-
-        All passengers spawn at the door node (L-aisle).  A flight
-        attendant directs them: R-assigned passengers are routed
-        through the galley to the R-aisle by apCloserIfMoveTo.
 
         Gate: only spawn when the door node is free AND the first
         aisle step toward the passenger's ap is clear."""

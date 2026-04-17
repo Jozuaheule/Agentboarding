@@ -150,7 +150,6 @@ def _dynamic_coverage(repo_root: Path) -> dict[str, Any]:
         "advance",
         "wait",
         "resolveSeatBlock",
-        "switchAisle",
     }
     all_defined_action_prefixes = {
         "none",
