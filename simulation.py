@@ -110,7 +110,7 @@ class CabinEnvironment:
         for label, (target_x, target_y) in self.DOOR_TARGETS.items():
             self._find_door(label, target_x=target_x, target_y=target_y)
 
-        # x_mid – longitudinal midpoint of the cabin (Property B8)
+        # x_mid – longitudinal midpoint of the cabin
         all_x = [d["x"] for d in self.graph.nodes.values()]
         self.x_mid: int = (min(all_x) + max(all_x)) // 2
 
@@ -155,6 +155,7 @@ class CabinEnvironment:
     def neighbors(self, nid: str) -> List[str]:
         return list(self.graph.successors(nid))
 
+    # TODO: where K_OBS is used for the hop distance
     def hop_distance(self, a: str, b: str) -> int:
         """Unweighted hop distance (for perception range Nk)."""
         try:
@@ -198,6 +199,7 @@ class PassengerAgent:
         zone_std: int = 1,
         zone_pyramid: int = 1,
     ) -> None:
+
         # === Staticp (time-invariant, Section 3.3.1) ===
         self.pax_id = pax_id
         self.assigned_seat_node = assigned_seat_node
@@ -230,6 +232,7 @@ class PassengerAgent:
         self.seat_shuffle_delay: int = 0            # Timer for penalty
         self.time_since_move: int = 0               # believes(p, timeSinceMove) [IC4]
 
+        # TODO: verify the correct cross references with the report
         # Per-tick beliefs (reset each tick during evaluate_intent)
         self.row_blocker: bool = False              # believes(p, rowBlocker)     [B4]
         self.row_blocked: bool = False              # believes(p, rowBlocked)     [B5]
@@ -249,11 +252,12 @@ class PassengerAgent:
     # -----------------------------------------------------------------------
     # Helper predicates
     # -----------------------------------------------------------------------
-    def _dir(self, env: CabinEnvironment) -> int:
-        """dir(p, t) = sign(xs − xm)  – intended travel direction."""
-        if self.position is None:
-            return 0
-        return _sign(self.seat_x - env.node_x(self.position))
+    # TODO: following helper function never defined
+    # def _dir(self, env: CabinEnvironment) -> int:
+    #     """dir(p, t) = sign(xs − xm)  – intended travel direction."""
+    #     if self.position is None:
+    #         return 0
+    #     return _sign(self.seat_x - env.node_x(self.position))
 
     def _ready_to_enter(self) -> bool:
         """readyToEnterp: no luggage OR luggage already stowed."""
@@ -362,7 +366,7 @@ class PassengerAgent:
         self, env: CabinEnvironment, occupied: Set[str]
     ) -> Optional[str]:
         """A5: Aisle advance with assigned-aisle discipline.
-        Uses pure Manhattan distance ranking, NO DIJKSTRA."""
+        Uses pure Manhattan distance ranking"""
         if self.position is None:
             return None
 
@@ -409,8 +413,8 @@ class PassengerAgent:
     def _best_row_step(
         self, env: CabinEnvironment, occupied: Set[str]
     ) -> Optional[str]:
-        """A4: enter row — move to free neighbor that is columnCloser
-        (PDF A4: columnCloserIfMoveTo). Uses purely mathematical manhattan distance."""
+        """A6: enter row — move to free neighbor that is columnCloser
+        (O4: columnCloserIfMoveTo). Uses purely mathematical manhattan distance."""
         if self.position is None:
             return None
         target = self.assigned_seat_node
@@ -509,6 +513,7 @@ class PassengerAgent:
         if self._stow_trigger(env):
             self.intent = "stow"
             return
+
         if self.luggage_status == "stowing":
             self.intent = "stow"
             return
@@ -542,6 +547,7 @@ class PassengerAgent:
         if self._at_seat_row_aisle(env) and self._ready_to_enter():
             on_path = self._on_path_nodes(env)
             blockers = [n for n in on_path if n in all_agent_at]
+
             # Also check if the target seat itself is occupied by someone else
             seat_occupied = (
                 self.assigned_seat_node in all_agent_at
@@ -618,6 +624,7 @@ class PassengerAgent:
         if self.intent == "sit":
             if cur != self.assigned_seat_node:
                 # Safety: shouldn't happen, but don't set seated if not at seat
+                # TODO: is there a missing prerequisite of no luggage here? (just as belief btw)
                 next_positions[self.pax_id] = cur
                 return "wait"
             self.seated = True                      # B1
@@ -625,7 +632,7 @@ class PassengerAgent:
             # Seated agents don't block aisle
             return "sit"
 
-        # ---- A2/A3: luggage stowage ----
+        # ---- A2/A3/A4: luggage stowage ----
         if self.intent == "stow":
             next_positions[self.pax_id] = cur
             if self.luggage_status == "unstowed":
@@ -640,9 +647,23 @@ class PassengerAgent:
                     return "stowComplete"
                 return "wait"
 
-        # ---- A5: advance ----
+        # ---- A5: enter row ----
+        if self.intent == "enterRow":
+            target = self._best_row_step(env, occupied)
+            if target is not None and target not in next_positions.values():
+                next_positions[self.pax_id] = target
+                self.position = target
+                self.time_since_move = 0
+                return f"moveTo:{target}"
+            next_positions[self.pax_id] = cur
+            self.time_since_move += 1
+            return "wait"
+
+        # ---- A6: advance ----
         if self.intent == "advance":
             target = self._best_aisle_advance(env, occupied)
+
+            # TODO: verify the fall back, because it is not in the report
             # Fallback: if in a non-target seat, allow any free aisle neighbor
             if target is None and env.node_type(cur) == "seat" and cur != self.assigned_seat_node:
                 target = self._any_free_aisle_neighbor(env, occupied)
@@ -655,19 +676,12 @@ class PassengerAgent:
             self.time_since_move += 1
             return "wait"
 
-        # ---- A4: enter row ----
-        if self.intent == "enterRow":
-            target = self._best_row_step(env, occupied)
-            if target is not None and target not in next_positions.values():
-                next_positions[self.pax_id] = target
-                self.position = target
-                self.time_since_move = 0
-                return f"moveTo:{target}"
-            next_positions[self.pax_id] = cur
-            self.time_since_move += 1
-            return "wait"
+        # ---- A7: default wait ----
+        next_positions[self.pax_id] = cur
+        self.time_since_move += 1
+        return "wait"
 
-        # ---- A7-A10/A15: seat-block resolution ----
+        # ---- A7b-A10: seat-block resolution ----
         if self.intent == "resolveSeatBlock":
             if self.row_blocker:
                 # The agent natively occupying the physical seat just sits and waits.
@@ -720,12 +734,6 @@ class PassengerAgent:
             next_positions[self.pax_id] = cur
             self.time_since_move += 1
             return "wait"
-
-        # ---- A6: default wait ----
-        next_positions[self.pax_id] = cur
-        self.time_since_move += 1
-        return "wait"
-
 
 # ---------------------------------------------------------------------------
 # Simulation
@@ -1001,6 +1009,7 @@ class BoardingSimulation:
             self.event_counters["seat_shuffle_start"] += 1
         elif action == "finishShuffle":
             self.event_counters["seat_shuffle_finish"] += 1
+            
     def step(self) -> bool:
         """One tick: Observe/Intent → Action/Commit."""
         self.tick += 1
