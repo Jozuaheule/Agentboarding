@@ -60,7 +60,7 @@ class StudyConfig:
     cross_zone_violation_rate: float = 0.05
     batch_size: int = 10
     ci_level: float = 0.95
-    target_ci_half_width_s: float = 10.0
+    target_ci_half_width_s: float = 7.5
     min_replications: int = 30
     max_replications: int = 500
     default_replications: int = 100

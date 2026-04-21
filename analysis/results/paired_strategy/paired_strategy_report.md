@@ -1,6 +1,6 @@
 # Paired Boarding Strategy Report
 
-Generated: 2026-04-15 12:18 UTC
+Generated: 2026-04-19 22:24 UTC
 
 ## Study Design
 - Independent variable: boarding strategy
@@ -9,36 +9,36 @@ Generated: 2026-04-15 12:18 UTC
 - Fixed assumptions: aircraft layout and cabin topology, seat map and class structure, load factor, luggage probability, active boarding doors, behavioral parameter settings, simulation logic and completion condition
 
 ## Run Summary
-| replications | master_seed | load_factor | luggage_probability | cross_zone_violation_rate | paired_runs | completed_pairs | failed_runs |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 158 | 2.026e+07 | 0.85 | 0.75 | 0.05 | 158 | 158 | 0 |
+| required_replications | replications_attempted | completed_pairs | master_seed | load_factor | luggage_probability | cross_zone_violation_rate | paired_runs | failed_runs |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 274 | 274 | 274 | 2.026e+07 | 0.85 | 0.75 | 0.05 | 274 | 0 |
 
 ## Descriptive Statistics
 | strategy | n_completed | mean | std | median | min | q10 | q25 | q75 | q90 | max |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| pyramid | 158 | 509.294 | 41.653 | 507.75 | 420.5 | 452.4 | 479 | 535.5 | 566.1 | 626 |
-| std | 158 | 738.475 | 60.879 | 735.75 | 582.5 | 662.85 | 695.625 | 774.75 | 817.75 | 933 |
+| pyramid | 274 | 504.091 | 39.954 | 499.25 | 406.5 | 457.15 | 476 | 530.875 | 560.05 | 616.5 |
+| std | 274 | 732.443 | 62.689 | 728.25 | 593.5 | 655.3 | 689.75 | 773.875 | 816.85 | 940 |
 
 ## Paired Inference
 | n_pairs | mean_paired_difference | mean_relative_improvement | normality_p_value | selected_test | test_statistic | p_value | effect_size_vargha_delaney_A | effect_size_paired_d | ci95_low | ci95_high |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 158 | 229.18 | 0.307 |  | one-sided paired t-test (zonal - pyramid > 0) | 45.291 | 2.447e-92 | 1 | 3.603 | 219.185 | 239.175 |
+| 274 | 228.352 | 0.308 |  | one-sided paired t-test (zonal - pyramid > 0) | 60.104 | 9.441e-160 | 1 | 3.631 | 220.873 | 235.832 |
 
 ## Paired Metrics
 | replication_id | boarding_time_zonal | boarding_time_pyramid | difference | ratio | relative_improvement |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 768 | 486 | 282 | 0.633 | 0.367 |
-| 2 | 843.5 | 545.5 | 298 | 0.647 | 0.353 |
-| 3 | 791.5 | 544.5 | 247 | 0.688 | 0.312 |
-| 4 | 844 | 509.5 | 334.5 | 0.604 | 0.396 |
-| 5 | 735 | 548 | 187 | 0.746 | 0.254 |
-| 6 | 696 | 565.5 | 130.5 | 0.812 | 0.188 |
-| 7 | 717.5 | 467.5 | 250 | 0.652 | 0.348 |
-| 8 | 858.5 | 503.5 | 355 | 0.586 | 0.414 |
-| 9 | 651 | 496.5 | 154.5 | 0.763 | 0.237 |
-| 10 | 770.5 | 626 | 144.5 | 0.812 | 0.188 |
-| 11 | 795.5 | 535.5 | 260 | 0.673 | 0.327 |
-| 12 | 726.5 | 545 | 181.5 | 0.75 | 0.25 |
+| 1 | 731 | 471 | 260 | 0.644 | 0.356 |
+| 2 | 673 | 487.5 | 185.5 | 0.724 | 0.276 |
+| 3 | 848 | 478 | 370 | 0.564 | 0.436 |
+| 4 | 786 | 465.5 | 320.5 | 0.592 | 0.408 |
+| 5 | 817 | 593.5 | 223.5 | 0.726 | 0.274 |
+| 6 | 853.5 | 541.5 | 312 | 0.634 | 0.366 |
+| 7 | 783.5 | 457.5 | 326 | 0.584 | 0.416 |
+| 8 | 747 | 516 | 231 | 0.691 | 0.309 |
+| 9 | 724.5 | 526 | 198.5 | 0.726 | 0.274 |
+| 10 | 699 | 506 | 193 | 0.724 | 0.276 |
+| 11 | 622 | 518.5 | 103.5 | 0.834 | 0.166 |
+| 12 | 796 | 521 | 275 | 0.655 | 0.345 |
 
 ## Figures
 ![Boarding time by strategy](fig_boxplot_boarding_time.png)
@@ -63,7 +63,8 @@ Generated: 2026-04-15 12:18 UTC
 - Conclusion: supports whether the paired t-test normality assumption is reasonable.
 
 ## Notes
-- Selected test: one-sided paired t-test (zonal - pyramid > 0), p-value: 2.447e-92, mean paired difference: 229.18 s.
-- Best mean boarding time: pyramid at 509.294 s.
-- Completed pairs: 158.
+- Replication summary: required=274, attempted=274, completed_pairs=274.
+- Selected test: one-sided paired t-test (zonal - pyramid > 0), p-value: 9.441e-160, mean paired difference: 228.352 s.
+- Best mean boarding time: pyramid at 504.091 s.
+- Completed pairs: 274.
 - Failed runs: 0.
