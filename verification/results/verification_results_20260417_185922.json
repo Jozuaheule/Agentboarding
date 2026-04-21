@@ -1,0 +1,191 @@
+[
+  {
+    "test_id": "V1",
+    "name": "Environment loading and topology consistency",
+    "status": "PASS",
+    "checks": 6,
+    "details": [
+      "Graph contains nodes",
+      "Graph contains edges",
+      "Seat-node partition is non-empty",
+      "Aisle-node partition is non-empty",
+      "All doors F/M/R are mapped to aisle nodes",
+      "Aisle type classification returns only L/R"
+    ]
+  },
+  {
+    "test_id": "V2",
+    "name": "Seat lookup consistency",
+    "status": "PASS",
+    "checks": 1,
+    "details": [
+      "Seat lookup maps known coordinates to the correct seat node"
+    ]
+  },
+  {
+    "test_id": "V3",
+    "name": "Passenger initialization and queue consistency",
+    "status": "PASS",
+    "checks": 3,
+    "details": [
+      "At least one passenger agent is created from manifest",
+      "All agents satisfy baseline initial-state checks",
+      "All agents are present in spawn queues"
+    ]
+  },
+  {
+    "test_id": "V4",
+    "name": "Spawn-gating behavior",
+    "status": "PASS",
+    "checks": 3,
+    "details": [
+      "Passenger does not spawn when first downstream step is blocked",
+      "Passenger spawns when downstream step becomes available",
+      "Spawned passenger position equals assigned door node"
+    ]
+  },
+  {
+    "test_id": "V5",
+    "name": "Movement legality and occupancy safety",
+    "status": "PASS",
+    "checks": 4,
+    "details": [
+      "All observed positions remain on valid graph nodes",
+      "No duplicate occupancy observed per tick",
+      "All non-shuffle moves follow graph successor edges",
+      "Teleport move is only accepted for finishShuffle seat-resolution"
+    ]
+  },
+  {
+    "test_id": "V6",
+    "name": "Routing progression toward access/seat",
+    "status": "PASS",
+    "checks": 3,
+    "details": [
+      "Single isolated passenger reaches assigned seat in finite steps",
+      "Passenger trajectory shows measurable progress toward row access",
+      "On assigned aisle, move decisions do not increase distance to current target"
+    ]
+  },
+  {
+    "test_id": "V7",
+    "name": "Luggage-state transition",
+    "status": "PASS",
+    "checks": 4,
+    "details": [
+      "Passenger in stow zone selects stow intent",
+      "First stow action transitions unstowed -> stowing",
+      "Stow countdown progresses until stowComplete",
+      "Final luggage state is stowed"
+    ]
+  },
+  {
+    "test_id": "V8",
+    "name": "Row entry without blockers",
+    "status": "PASS",
+    "checks": 2,
+    "details": [
+      "Passenger at aisle-access node chooses enterRow when path is clear",
+      "Enter-row action performs a legal row movement"
+    ]
+  },
+  {
+    "test_id": "V9",
+    "name": "Row-block detection and resolution",
+    "status": "PASS",
+    "checks": 3,
+    "details": [
+      "Blocked row access is detected at aisle-access node",
+      "Seat-block resolution starts shuffle delay",
+      "After delay expiry, passenger reaches assigned seat"
+    ]
+  },
+  {
+    "test_id": "V10",
+    "name": "Completion-condition and final-state consistency",
+    "status": "PASS",
+    "checks": 4,
+    "details": [
+      "Full run reaches completion",
+      "All passengers end seated",
+      "All passengers end at assigned seat node",
+      "Completion ticks: 1425"
+    ],
+    "kpis": {
+      "event_counters": {
+        "spawned": 248,
+        "moves": 9138,
+        "waits": 40421,
+        "seated": 248,
+        "row_conflict_events": 2301,
+        "stow_start": 192,
+        "stow_complete": 192,
+        "seat_shuffle_start": 57,
+        "seat_shuffle_finish": 56
+      }
+    }
+  },
+  {
+    "test_id": "V11",
+    "name": "Repeated-run completion invariants",
+    "status": "PASS",
+    "checks": 3,
+    "details": [
+      "Seed 42: invariants hold at completion",
+      "Seed 43: invariants hold at completion",
+      "Seed 44: invariants hold at completion"
+    ],
+    "kpis": {
+      "per_seed": [
+        {
+          "seed": 42,
+          "event_counters": {
+            "spawned": 248,
+            "moves": 9138,
+            "waits": 40421,
+            "seated": 248,
+            "row_conflict_events": 2301,
+            "stow_start": 192,
+            "stow_complete": 192,
+            "seat_shuffle_start": 57,
+            "seat_shuffle_finish": 56
+          },
+          "total_ticks": 1425
+        },
+        {
+          "seed": 43,
+          "event_counters": {
+            "spawned": 248,
+            "moves": 9143,
+            "waits": 43246,
+            "seated": 248,
+            "row_conflict_events": 2293,
+            "stow_start": 192,
+            "stow_complete": 192,
+            "seat_shuffle_start": 55,
+            "seat_shuffle_finish": 55
+          },
+          "total_ticks": 1588
+        },
+        {
+          "seed": 44,
+          "event_counters": {
+            "spawned": 248,
+            "moves": 9165,
+            "waits": 53113,
+            "seated": 248,
+            "row_conflict_events": 1922,
+            "stow_start": 192,
+            "stow_complete": 192,
+            "seat_shuffle_start": 46,
+            "seat_shuffle_finish": 46
+          },
+          "total_ticks": 1687
+        }
+      ],
+      "averages": {
+        "row_conflict_events": 2172.0
+      }
+    }
+  }
+]

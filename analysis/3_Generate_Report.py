@@ -56,6 +56,7 @@ def _df_to_markdown_table(df: pd.DataFrame) -> str:
 def _load_report_inputs(output_dir: Path) -> dict:
     return {
         "config": _load_json(output_dir / "study_config_snapshot.json"),
+        "replication_summary": _load_json(output_dir / "required_replications.json"),
         "strategy_summary": _load_csv(output_dir / "strategy_descriptive_summary.csv"),
         "inferential_summary": _load_csv(output_dir / "paired_inferential_summary.csv"),
         "paired_runs": _load_csv(output_dir / "paired_runs_pairs.csv"),
@@ -109,6 +110,7 @@ def _build_figure_explanations_markdown() -> List[str]:
 def generate_markdown_report(output_dir: Path) -> str:
     inputs = _load_report_inputs(output_dir)
     config = inputs["config"]
+    replication_summary = inputs["replication_summary"]
     strategy_df = inputs["strategy_summary"]
     infer_df = inputs["inferential_summary"]
     paired_df = inputs["paired_runs"]
@@ -130,13 +132,14 @@ def generate_markdown_report(output_dir: Path) -> str:
 
     md.append("## Run Summary")
     md.append(_df_to_markdown_table(pd.DataFrame([{
-        "replications": config.get("replications", ""),
-        "master_seed": config.get("master_seed", ""),
-        "load_factor": config.get("load_factor", ""),
-        "luggage_probability": config.get("luggage_probability", ""),
-        "cross_zone_violation_rate": config.get("cross_zone_violation_rate", ""),
+        "required_replications": replication_summary.get("required_replications", config.get("replications", "")),
+        "replications_attempted": replication_summary.get("replications_attempted", int(len(paired_df))),
+        "completed_pairs": replication_summary.get("completed_pairs", int(paired_df["pair_completed"].sum()) if not paired_df.empty else 0),
+        "master_seed": replication_summary.get("master_seed", config.get("master_seed", "")),
+        "load_factor": replication_summary.get("load_factor", config.get("load_factor", "")),
+        "luggage_probability": replication_summary.get("luggage_probability", config.get("luggage_probability", "")),
+        "cross_zone_violation_rate": replication_summary.get("cross_zone_violation_rate", config.get("cross_zone_violation_rate", "")),
         "paired_runs": int(len(paired_df)),
-        "completed_pairs": int(paired_df["pair_completed"].sum()) if not paired_df.empty else 0,
         "failed_runs": len(failures_df),
     }])))
     md.append("")
@@ -174,6 +177,13 @@ def generate_markdown_report(output_dir: Path) -> str:
     md.extend(_build_figure_explanations_markdown())
 
     md.append("## Notes")
+    if replication_summary:
+        md.append(
+            "- Replication summary: "
+            f"required={_format_value(replication_summary.get('required_replications', ''))}, "
+            f"attempted={_format_value(replication_summary.get('replications_attempted', ''))}, "
+            f"completed_pairs={_format_value(replication_summary.get('completed_pairs', ''))}."
+        )
     for note in _build_summary_notes(inputs):
         md.append(f"- {note}")
     md.append("")
